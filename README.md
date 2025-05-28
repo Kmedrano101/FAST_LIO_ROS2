@@ -1,4 +1,4 @@
-> ROS2 Fork repo maintainer: [Ericsiii](https://github.com/Ericsii)
+> ROS2 Fork repo maintainer: [Kmedrano101](https://github.com/Kmedrano101)
 
 ## Related Works and Extended Application
 

@@ -5,6 +5,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+if(POLICY CMP0074)
+  cmake_policy(SET CMP0074 NEW)
+endif()
+
  ADD_COMPILE_OPTIONS(-std=c++17) 
  ADD_COMPILE_OPTIONS(-std=c++17) 
  set(CMAKE_CXX_FLAGS "-std=c++17 -O3") 
@@ -121,7 +125,7 @@ install(TARGETS fastlio_mapping
 )
 
 install(
-  DIRECTORY config launch rviz
+  DIRECTORY config launch rviz rviz_cfg
   DESTINATION share/${PROJECT_NAME}
 )
 
