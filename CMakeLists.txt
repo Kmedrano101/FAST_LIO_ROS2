@@ -44,6 +44,9 @@ else()
   add_definitions(-DMP_PROC_NUM=1)
 endif()
 
+# Force Boost to keep _1, _2, … in the global namespace
+add_compile_definitions(BOOST_BIND_GLOBAL_PLACEHOLDERS)
+
 find_package(OpenMP QUIET)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
