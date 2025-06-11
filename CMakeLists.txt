@@ -9,14 +9,14 @@ if(POLICY CMP0074)
   cmake_policy(SET CMP0074 NEW)
 endif()
 
- ADD_COMPILE_OPTIONS(-std=c++17) 
- ADD_COMPILE_OPTIONS(-std=c++17) 
- set(CMAKE_CXX_FLAGS "-std=c++17 -O3") 
+ADD_COMPILE_OPTIONS(-std=c++17) 
+ADD_COMPILE_OPTIONS(-std=c++17) 
+set(CMAKE_CXX_FLAGS "-std=c++17 -O3") 
   
- add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\") 
+add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\") 
   
- set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions") 
- set(CMAKE_CXX_STANDARD 17) 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions") 
+set(CMAKE_CXX_STANDARD 17) 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -std=c++0x -std=c++14 -fexceptions")
@@ -63,7 +63,7 @@ find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
+find_package(livox_ros_driver2 QUIET)
 find_package(rosidl_default_generators REQUIRED)
 
 set(dependencies
@@ -77,8 +77,17 @@ set(dependencies
   visualization_msgs
   pcl_ros
   pcl_conversions
-  livox_ros_driver2
 )
+
+if(livox_ros_driver2_FOUND)
+  message(WARNING "livox_ros_driver2 found. Building Livox support.")
+  target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX_DRIVER2)
+  set(USE_LIVOX TRUE)
+  list(APPEND dependencies livox_ros_driver2)
+else()
+  message(WARNING "livox_ros_driver2 not found. Building without Livox support.")
+  set(USE_LIVOX FALSE)
+endif()
 
 # Thirdparty libraries
 find_package(Eigen3 REQUIRED)
@@ -105,6 +114,10 @@ target_include_directories(fastlio_mapping PUBLIC
 target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eigen3::Eigen)
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 
+if(USE_LIVOX)
+  target_link_libraries(fastlio_mapping livox_ros_driver2::livox_ros_driver2)
+  target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX=1)
+endif()
 list(APPEND EOL_LIST "foxy" "galactic" "eloquent" "dashing" "crystal")
 
 if($ENV{ROS_DISTRO} IN_LIST EOL_LIST)
