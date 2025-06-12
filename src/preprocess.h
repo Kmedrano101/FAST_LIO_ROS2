@@ -130,7 +130,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
     (float, x, x)
     (float, y, y)
     (float, z, z)
-    (float, reflectivity, reflectivity)
+    (float, reflectivity, intensity)  // Use reflectivity as intensity
     (uint8_t, tag, tag)
     (uint8_t, line, line)
 )
