@@ -81,7 +81,6 @@ set(dependencies
 
 if(livox_ros_driver2_FOUND)
   message(WARNING "livox_ros_driver2 found. Building Livox support.")
-  target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX_DRIVER2)
   set(USE_LIVOX TRUE)
   list(APPEND dependencies livox_ros_driver2)
 else()
@@ -111,13 +110,14 @@ target_include_directories(fastlio_mapping PUBLIC
   $<INSTALL_INTERFACE:include>
   ${PCL_INCLUDE_DIRS}
 )
+
 target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eigen3::Eigen)
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 
-if(USE_LIVOX)
-  target_link_libraries(fastlio_mapping livox_ros_driver2::livox_ros_driver2)
-  target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX=1)
+if(livox_ros_driver2_FOUND)
+  target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX_DRIVER2)
 endif()
+
 list(APPEND EOL_LIST "foxy" "galactic" "eloquent" "dashing" "crystal")
 
 if($ENV{ROS_DISTRO} IN_LIST EOL_LIST)

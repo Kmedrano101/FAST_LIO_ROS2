@@ -87,7 +87,7 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
       break;
     
     case GAZEBOSIM:
-      gazebo_handler(msg);
+      default_handler(msg);
       break;
 
     default:

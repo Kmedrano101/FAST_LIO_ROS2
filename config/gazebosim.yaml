@@ -22,7 +22,9 @@
         mapping:
           extrinsic_est_en: true
           extrinsic_T: [0.120, 0.03, 0.242]
-          extrinsic_R: [1,0,0, 0,1,0, 0,0,1] # identity
+          extrinsic_R: [ 1., 0., 0.,
+                          0., 1., 0.,
+                          0., 0., 1.] # identity
           fov_degree: 180.0              # horizontal FOV, if you want to clamp
           det_range:  60.0
         
