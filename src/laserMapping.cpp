@@ -599,6 +599,7 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     laserCloudmsg.header.frame_id = "camera_init";
     pubLaserCloudMap->publish(laserCloudmsg);
 }
+
 void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
