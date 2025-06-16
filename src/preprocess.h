@@ -121,18 +121,32 @@ typedef struct {
   float x;            /**< X axis, Unit:m */
   float y;            /**< Y axis, Unit:m */
   float z;            /**< Z axis, Unit:m */
-  float reflectivity; /**< Reflectivity   */
+  float intensity; /**< Reflectivity   */
   uint8_t tag;        /**< Livox point tag   */
   uint8_t line;       /**< Laser line id     */
-} LivoxPointXyzrtl;
+} LivoxPointXyzitl;
 }
-POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzitl,
     (float, x, x)
     (float, y, y)
     (float, z, z)
-    (float, reflectivity, intensity)  // Use reflectivity as intensity
+    (float, intensity, intensity)  // Use reflectivity as intensity real sensor
     (uint8_t, tag, tag)
     (uint8_t, line, line)
+)
+
+namespace gazebo_ros
+{
+typedef struct {
+  float x;            /**< X axis, Unit:m */
+  float y;            /**< Y axis, Unit:m */
+  float z;            /**< Z axis, Unit:m */
+} GazeboPointXYZ;
+}
+POINT_CLOUD_REGISTER_POINT_STRUCT(gazebo_ros::GazeboPointXYZ,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
 )
 
 class Preprocess
@@ -165,7 +179,7 @@ private:
   void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  //void gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
+  void gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);
   void pub_func(PointCloudXYZI &pl, const rclcpp::Time &ct);

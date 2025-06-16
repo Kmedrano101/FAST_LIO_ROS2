@@ -14,7 +14,7 @@
             imu_topic:  "/sim_imu/imu"                  # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
 
         preprocess:
-          lidar_type: 5       # <-- “Gazebosim” mode
+          lidar_type: 5       # 1 AVIA LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for MID360 LiDAR, 5 for Gazebosim LiDAR
           scan_line:  16      # or however many rings your sim publishes
           blind:      0.01
           scan_rate:  10
