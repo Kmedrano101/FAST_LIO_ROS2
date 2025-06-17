@@ -141,12 +141,17 @@ typedef struct {
   float x;            /**< X axis, Unit:m */
   float y;            /**< Y axis, Unit:m */
   float z;            /**< Z axis, Unit:m */
-} GazeboPointXYZ;
+  float intensity; /**< Intensity   */
+  uint16_t ring;      /**< Laser ring id     */
+
+} GazeboPointXyzir;
 }
-POINT_CLOUD_REGISTER_POINT_STRUCT(gazebo_ros::GazeboPointXYZ,
+POINT_CLOUD_REGISTER_POINT_STRUCT(gazebo_ros::GazeboPointXyzir,
     (float, x, x)
     (float, y, y)
     (float, z, z)
+    (float, intensity, intensity)
+    (uint16_t, ring, ring)
 )
 
 class Preprocess
