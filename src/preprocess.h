@@ -5,6 +5,8 @@
 #ifdef USE_LIVOX_DRIVER2
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #endif
+#define LIDAR1  0
+#define LIDAR2  1
 
 using namespace std;
 
@@ -20,7 +22,7 @@ enum LID_TYPE
   OUST64,
   MID360,
   GAZEBOSIM // Gazebo simulation handler
-};  //{1, 2, 3}
+}; //{1, 2, 3}
 enum TIME_UNIT
 {
   SEC = 0,
@@ -72,34 +74,35 @@ struct orgtype
 
 namespace velodyne_ros
 {
-struct EIGEN_ALIGN16 Point
-{
-  PCL_ADD_POINT4D;
-  float intensity;
-  float time;
-  uint16_t ring;
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
-}  // namespace velodyne_ros
+  struct EIGEN_ALIGN16 Point
+  {
+    PCL_ADD_POINT4D;
+    float intensity;
+    float time;
+    uint16_t ring;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  };
+} // namespace velodyne_ros
 POINT_CLOUD_REGISTER_POINT_STRUCT(velodyne_ros::Point,
-                                  (float, x, x)(float, y, y)(float, z, z)(float, intensity,
-                                                                          intensity)(float, time, time)(uint16_t, ring,
-                                                                                                        ring))
-
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, intensity, intensity)
+    (float, time, time)(uint16_t, ring, ring))
 namespace ouster_ros
 {
-struct EIGEN_ALIGN16 Point
-{
-  PCL_ADD_POINT4D;
-  float intensity;
-  uint32_t t;
-  uint16_t reflectivity;
-  uint8_t ring;
-  uint16_t ambient;
-  uint32_t range;
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
-}  // namespace ouster_ros
+  struct EIGEN_ALIGN16 Point
+  {
+    PCL_ADD_POINT4D;
+    float intensity;
+    uint32_t t;
+    uint16_t reflectivity;
+    uint8_t ring;
+    uint16_t ambient;
+    uint32_t range;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  };
+} // namespace ouster_ros
 
 // clang-format off
 POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::Point,
@@ -162,18 +165,18 @@ class Preprocess
   Preprocess();
   ~Preprocess();
   #ifdef USE_LIVOX_DRIVER2
-    void process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
+    void process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out, const int &lidar_num);
   #endif
-  void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
-  void set(bool feat_en, int lid_type, double bld, int pfilt_num);
+  void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out, const int &lidar_num);
+  void set(bool feat_en);
 
   // sensor_msgs::PointCloud2::ConstPtr pointcloud;
   PointCloudXYZI pl_full, pl_corn, pl_surf;
   PointCloudXYZI pl_buff[128]; //maximum 128 line lidar
   vector<orgtype> typess[128]; //maximum 128 line lidar
-  float time_unit_scale;
-  int lidar_type, point_filter_num, N_SCANS, SCAN_RATE, time_unit;
-  double blind;
+  float time_unit_scale[2];
+  int lidar_type[2], point_filter_num[2], N_SCANS[2], SCAN_RATE[2], time_unit[2];
+  double blind[2];
   bool feature_enabled, given_offset_time;
   // ros::Publisher pub_full, pub_surf, pub_corn;
 
@@ -181,16 +184,16 @@ private:
   #ifdef USE_LIVOX_DRIVER2
     void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg);
   #endif
-  void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);
+  void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);
+  void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);
+  void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);
+  void gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg,const int &lidar_num);
+  void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);
+  void give_feature(PointCloudXYZI &pl, vector<orgtype> &types, const int &lidar_num);
   void pub_func(PointCloudXYZI &pl, const rclcpp::Time &ct);
-  int  plane_judge(const PointCloudXYZI &pl, vector<orgtype> &types, uint i, uint &i_nex, Eigen::Vector3d &curr_direct);
-  bool small_plane(const PointCloudXYZI &pl, vector<orgtype> &types, uint i_cur, uint &i_nex, Eigen::Vector3d &curr_direct);
-  bool edge_jump_judge(const PointCloudXYZI &pl, vector<orgtype> &types, uint i, Surround nor_dir);
+  int  plane_judge(const PointCloudXYZI &pl, vector<orgtype> &types, uint i, uint &i_nex, Eigen::Vector3d &curr_direct, const int &lidar_num);
+  bool small_plane(const PointCloudXYZI &pl, vector<orgtype> &types, uint i_cur, uint &i_nex, Eigen::Vector3d &curr_direct, const int &lidar_num);
+  bool edge_jump_judge(const PointCloudXYZI &pl, vector<orgtype> &types, uint i, Surround nor_dir, const int &lidar_num);
 
   
   int group_size;

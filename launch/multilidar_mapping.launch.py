@@ -32,7 +32,7 @@ def generate_launch_description():
         description='Yaml config file path'
     )
     decalre_config_file_cmd = DeclareLaunchArgument(
-        'config_file', default_value='gazebosim.yaml',
+        'config_file', default_value='multilidar.yaml',
         description='Config file'
     )
     declare_rviz_cmd = DeclareLaunchArgument(

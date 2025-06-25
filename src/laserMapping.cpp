@@ -76,9 +76,21 @@ double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_pl
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
 bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
-bool   traj_save_en = false;
-/**************************/
+bool   traj_save_en = false, async_debug = false;
 
+/********* MULTI-LIDAR Support ********/
+bool multi_lidar = false;
+string lid_topic[2], imu_topic;    // <-- topic for each lidar
+double last_timestamp_lidar[2] = {0, 0}; // <-- one per lidar
+bool is_first_lidar[2] = {true, true};   // <-- one per lidar
+int scan_count[2] = {0, 0};              // <-- one per lidar
+deque<double> time_buffer;               // <-- shared, will mark lidar source per-scan
+deque<PointCloudXYZI::Ptr> lidar_buffer; // <-- shared, will mark lidar source per-scan
+deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
+int current_lidar_num = 1;
+/****************************************/
+
+Eigen::Matrix4f tf_m360_child = Eigen::Matrix4f::Identity();
 float res_last[100000] = {0.0};
 float DET_RANGE = 300.0f;
 const float MOV_THRESHOLD = 1.5f;
@@ -88,29 +100,34 @@ mutex mtx_buffer;
 condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
-string map_file_path, lid_topic, imu_topic;
+string map_file_path;
 string traj_file_path, pcd_file_name;
 
 double res_mean_last = 0.05, total_residual = 0.0;
-double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
+double last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
 double filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
-int    effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
+int    effct_feat_num = 0, time_log_counter = 0, publish_count = 0;
 int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
 bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
-bool    is_first_lidar = true;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
 vector<PointVector>  Nearest_Points; 
-vector<double>       extrinT(3, 0.0);
+vector<double>       extrinT(3, 0.0); // Extrinsic Lidar 1 to base_link
 vector<double>       extrinR(9, 0.0);
-deque<double>                     time_buffer;
-deque<PointCloudXYZI::Ptr>        lidar_buffer;
-deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
+vector<double>       extrinT2(3, 0.0); // Extrinsic Lidar 2 to base_link
+vector<double>       extrinR2(9, 0.0);
+vector<double>       extrinT3(3, 0.0); // Extrinsic relative from Lidar 2 to Lidar 1
+vector<double>       extrinR3(9, 0.0);
+vector<double>       extrinT4(3, 0.0); // Extrinsic Lidar 1 to drone
+vector<double>       extrinR4(9, 0.0);
+
+Eigen::Matrix4d LiDAR1_wrt_drone = Eigen::Matrix4d::Identity();
+Eigen::Matrix4d LiDAR2_wrt_LiDAR1 = Eigen::Matrix4d::Identity();
 
 PointCloudXYZI::Ptr featsFromMap(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());
@@ -286,26 +303,58 @@ void lasermap_fov_segment()
 
 void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg) 
 {
+    //RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "standard_pcl_cbk started");
+    const int lidar_id = 0;
     mtx_buffer.lock();
-    scan_count ++;
+    scan_count[lidar_id] ++;
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
-    if (!is_first_lidar && cur_time < last_timestamp_lidar)
+    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
         std::cerr << "lidar loop back, clear buffer" << std::endl;
         lidar_buffer.clear();
     }
-    if (is_first_lidar)
+    if (is_first_lidar[lidar_id])
     {
-        is_first_lidar = false;
+        is_first_lidar[lidar_id] = false;
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);
+    p_pre->process(msg, ptr, lidar_id);
+    ptr->header.seq = lidar_id;
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(cur_time);
-    last_timestamp_lidar = cur_time;
-    s_plot11[scan_count] = omp_get_wtime() - preprocess_start_time;
+    last_timestamp_lidar[lidar_id] = cur_time;
+    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    mtx_buffer.unlock();
+    sig_buffer.notify_all();
+}
+
+void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
+{
+    //RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "standard_pcl_cbk2 started");
+    const int lidar_id = 1;
+    mtx_buffer.lock();
+    scan_count[lidar_id] ++;
+    double cur_time = get_time_sec(msg->header.stamp);
+    double preprocess_start_time = omp_get_wtime();
+    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+    {
+        std::cerr << "lidar loop back, clear buffer" << std::endl;
+        lidar_buffer.clear();
+    }
+    if (is_first_lidar[lidar_id])
+    {
+        is_first_lidar[lidar_id] = false;
+    }
+
+    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+    p_pre->process(msg, ptr, lidar_id);
+    ptr->header.seq = lidar_id;
+    lidar_buffer.push_back(ptr);
+    time_buffer.push_back(cur_time);
+    last_timestamp_lidar[lidar_id] = cur_time;
+    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
@@ -315,39 +364,40 @@ bool   timediff_set_flg = false;
 #ifdef USE_LIVOX_DRIVER2
 void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg) 
 {
+    const int lidar_id = 0;
     mtx_buffer.lock();
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
-    scan_count ++;
-    if (!is_first_lidar && cur_time < last_timestamp_lidar)
+    scan_count[lidar_id] ++;
+    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
         std::cerr << "lidar loop back, clear buffer" << std::endl;
         lidar_buffer.clear();
     }
-    if(is_first_lidar)
+    if(is_first_lidar[lidar_id])
     {
-        is_first_lidar = false;
+        is_first_lidar[lidar_id] = false;
     }
-    last_timestamp_lidar = cur_time;
+    last_timestamp_lidar[lidar_id] = cur_time;
     
-    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
     {
-        printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar);
+        printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
     }
 
-    if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar - last_timestamp_imu) > 1 && !imu_buffer.empty())
+    if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
     {
         timediff_set_flg = true;
-        timediff_lidar_wrt_imu = last_timestamp_lidar + 0.1 - last_timestamp_imu;
+        timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
         printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
     lidar_buffer.push_back(ptr);
-    time_buffer.push_back(last_timestamp_lidar);
+    time_buffer.push_back(last_timestamp_lidar[lidar_id]);
     
-    s_plot11[scan_count] = omp_get_wtime() - preprocess_start_time;
+    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
@@ -396,10 +446,28 @@ bool sync_packages(MeasureGroup &meas)
     {
         meas.lidar = lidar_buffer.front();
         meas.lidar_beg_time = time_buffer.front();
+        //Check data from Lidar 2 (lidar_id=1)and transform it to Lidar 1 frame
+        if (meas.lidar->header.seq == 1)
+        {
+            // LiDAR2: transform to LiDAR1 frame
+            pcl::transformPointCloud(*meas.lidar, *meas.lidar, LiDAR2_wrt_LiDAR1);
+            current_lidar_num = 2;
+            if (async_debug) {
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "Second LiDAR!");
+            }
+        }
+        else
+        {
+            current_lidar_num = 1;
+            if (async_debug) {
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "First LiDAR!");
+            }
+        }
+
         if (meas.lidar->points.size() <= 1) // time too little
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
-            std::cerr << "Too few input point cloud!\n";
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "Too few input point cloud!");
         }
         else if (meas.lidar->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime)
         {
@@ -413,7 +481,6 @@ bool sync_packages(MeasureGroup &meas)
         }
 
         meas.lidar_end_time = lidar_end_time;
-
         lidar_pushed = true;
     }
 
@@ -827,7 +894,9 @@ public:
         this->declare_parameter<bool>("publish.scan_bodyframe_pub_en", true);
         this->declare_parameter<int>("max_iteration", 4);
         this->declare_parameter<string>("map_file_path", string(ROOT_DIR) + "PCD/map.pcd");
+        this->declare_parameter<bool>("multi_lidar", false);
         this->declare_parameter<string>("common.lid_topic", "/livox/lidar");
+        this->declare_parameter<string>("common.lid_topic2", "/livox/lidar2");
         this->declare_parameter<string>("common.imu_topic", "/livox/imu");
         this->declare_parameter<bool>("common.time_sync_en", false);
         this->declare_parameter<double>("common.time_offset_lidar_to_imu", 0.0);
@@ -842,11 +911,13 @@ public:
         this->declare_parameter<double>("mapping.b_gyr_cov", 0.0001);
         this->declare_parameter<double>("mapping.b_acc_cov", 0.0001);
         this->declare_parameter<double>("preprocess.blind", 0.01);
-        this->declare_parameter<int>("preprocess.lidar_type", AVIA);
+        this->declare_parameter<int>("preprocess.lidar_type", MID360);
+        this->declare_parameter<int>("preprocess.lidar_type2", MID360);
         this->declare_parameter<int>("preprocess.scan_line", 16);
         this->declare_parameter<int>("preprocess.timestamp_unit", US);
         this->declare_parameter<int>("preprocess.scan_rate", 10);
-        this->declare_parameter<int>("point_filter_num", 2);
+        this->declare_parameter<int>("preprocess.point_filter_num", 2);
+        this->declare_parameter<int>("preprocess.point_filter_num2", 2);
         this->declare_parameter<bool>("feature_extract_enable", false);
         this->declare_parameter<bool>("runtime_pos_log_enable", false);
         this->declare_parameter<bool>("mapping.extrinsic_est_en", true);
@@ -855,6 +926,13 @@ public:
         this->declare_parameter<int>("pcd_save.interval", -1);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_T2", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_R2", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_T_L2_wrt_L1", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_R_L2_wrt_L1", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_T_L1_wrt_drone", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_R_L1_wrt_drone", vector<double>());
+
         this->declare_parameter<bool>("traj_save.traj_save_en", false);
         this->declare_parameter<string>("traj_save.traj_file_path", "");
 
@@ -864,7 +942,9 @@ public:
         this->get_parameter_or<bool>("publish.scan_bodyframe_pub_en", scan_body_pub_en, true);
         this->get_parameter_or<int>("max_iteration", NUM_MAX_ITERATIONS, 4);
         this->get_parameter_or<string>("map_file_path", map_file_path, string(ROOT_DIR) + "PCD/map.pcd");
-        this->get_parameter_or<string>("common.lid_topic", lid_topic, "/livox/lidar");
+        this->get_parameter_or<bool>("multi_lidar", multi_lidar, false);
+        this->get_parameter_or<string>("common.lid_topic", lid_topic[LIDAR1], "/livox/lidar");
+        this->get_parameter_or<string>("common.lid_topic2", lid_topic[LIDAR2], "/livox/lidar2");
         this->get_parameter_or<string>("common.imu_topic", imu_topic,"/livox/imu");
         this->get_parameter_or<bool>("common.time_sync_en", time_sync_en, false);
         this->get_parameter_or<double>("common.time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
@@ -877,12 +957,18 @@ public:
         this->get_parameter_or<double>("mapping.acc_cov",acc_cov,0.1);
         this->get_parameter_or<double>("mapping.b_gyr_cov",b_gyr_cov,0.0001);
         this->get_parameter_or<double>("mapping.b_acc_cov",b_acc_cov,0.0001);
-        this->get_parameter_or<double>("preprocess.blind", p_pre->blind, 0.01);
-        this->get_parameter_or<int>("preprocess.lidar_type", p_pre->lidar_type, AVIA);
-        this->get_parameter_or<int>("preprocess.scan_line", p_pre->N_SCANS, 16);
-        this->get_parameter_or<int>("preprocess.timestamp_unit", p_pre->time_unit, US);
-        this->get_parameter_or<int>("preprocess.scan_rate", p_pre->SCAN_RATE, 10);
-        this->get_parameter_or<int>("point_filter_num", p_pre->point_filter_num, 2);
+        this->get_parameter_or<double>("preprocess.blind", p_pre->blind[LIDAR1], 0.01);
+        this->get_parameter_or<double>("preprocess.blind2", p_pre->blind[LIDAR2], 0.01);
+        this->get_parameter_or<int>("preprocess.lidar_type", p_pre->lidar_type[LIDAR1], MID360);
+        this->get_parameter_or<int>("preprocess.lidar_type2", p_pre->lidar_type[LIDAR2], MID360);
+        this->get_parameter_or<int>("preprocess.scan_line", p_pre->N_SCANS[LIDAR1], 16);
+        this->get_parameter_or<int>("preprocess.scan_line2", p_pre->N_SCANS[LIDAR2], 16);
+        this->get_parameter_or<int>("preprocess.timestamp_unit", p_pre->time_unit[LIDAR1], US);
+        this->get_parameter_or<int>("preprocess.timestamp_unit2", p_pre->time_unit[LIDAR2], US);
+        this->get_parameter_or<int>("preprocess.scan_rate", p_pre->SCAN_RATE[LIDAR1], 10);
+        this->get_parameter_or<int>("preprocess.scan_rate2", p_pre->SCAN_RATE[LIDAR2], 10);
+        this->get_parameter_or<int>("preprocess.point_filter_num", p_pre->point_filter_num[LIDAR1], 2);
+        this->get_parameter_or<int>("preprocess.point_filter_num2", p_pre->point_filter_num[LIDAR2], 2);
         this->get_parameter_or<bool>("feature_extract_enable", p_pre->feature_enabled, false);
         this->get_parameter_or<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
         this->get_parameter_or<bool>("mapping.extrinsic_est_en", extrinsic_est_en, true);
@@ -891,10 +977,17 @@ public:
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, -1);
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_T2", extrinT2, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_R2", extrinR2, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_T_L2_wrt_L1", extrinT3, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_R_L2_wrt_L1", extrinR3, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_T_L1_wrt_drone", extrinT4, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_R_L1_wrt_drone", extrinR4, vector<double>());
         this->get_parameter_or<bool>("traj_save.traj_save_en", traj_save_en, false);
         this->get_parameter_or<string>("traj_save.traj_file_path", traj_file_path, "");
 
-        RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type %d", p_pre->lidar_type);
+        RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
+        RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 2: %d", p_pre->lidar_type[LIDAR2]);
 
         path.header.stamp = this->get_clock()->now();
         path.header.frame_id ="camera_init";
@@ -937,17 +1030,67 @@ public:
             cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
         /*** ROS subscribe initialization ***/
-        if (p_pre->lidar_type == AVIA)
+        if (!multi_lidar)
         {
-            #ifdef USE_LIVOX_DRIVER2
-            sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(lid_topic, 20, livox_pcl_cbk);
-            #else
-                RCLCPP_WARN(this->get_logger(), "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type to a supported type.");
-            #endif
+            // Single lidar setup
+            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            {
+                RCLCPP_INFO(rclcpp::get_logger(), "Using Single LiDAR setup with Livoxdriver2 type.");
+#ifdef USE_LIVOX_DRIVER2
+                sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+                    lid_topic[LIDAR1], 20, livox_pcl_cbk);
+#else
+                RCLCPP_WARN(this->get_logger(),
+                            "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type to a supported type.");
+#endif
+            }
+            else
+            {
+                RCLCPP_INFO(rclcpp::get_logger(), "Using Single LiDAR setup with PointCloud2 type.");
+                sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                    lid_topic[LIDAR1], 20, standard_pcl_cbk);
+            }
         }
         else
         {
-            sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(lid_topic, 20, standard_pcl_cbk);
+            V3D LiDAR2_T_wrt_LiDAR1; LiDAR2_T_wrt_LiDAR1<<VEC_FROM_ARRAY(extrinT3);
+            M3D Lidar2_R_wrt_LiDAR1; Lidar2_R_wrt_LiDAR1<<MAT_FROM_ARRAY(extrinR3);
+            LiDAR2_wrt_LiDAR1.block<3,3>(0,0) = Lidar2_R_wrt_LiDAR1;
+            LiDAR2_wrt_LiDAR1.block<3,1>(0,3) = LiDAR2_T_wrt_LiDAR1;
+            // Multi-lidar setup
+            // --- Lidar 1 ---
+            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            {
+#ifdef USE_LIVOX_DRIVER2
+                sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+                    lid_topic[LIDAR1], 20, livox_pcl_cbk);
+#else
+                RCLCPP_WARN(this->get_logger(),
+                            "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type to a supported type.");
+#endif
+            }
+            else
+            {
+                sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                    lid_topic[LIDAR1], 20, standard_pcl_cbk);
+            }
+
+            // --- Lidar 2 ---
+            if (p_pre->lidar_type[LIDAR2] == AVIA)
+            {
+#ifdef USE_LIVOX_DRIVER2
+                sub_pcl_livox2_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+                    lid_topic[LIDAR2], 20, livox_pcl_cbk2);
+#else
+                RCLCPP_WARN(this->get_logger(),
+                            "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type2 to a supported type.");
+#endif
+            }
+            else
+            {
+                sub_pcl_pc2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                    lid_topic[LIDAR2], 20, standard_pcl_cbk2);
+            }
         }
         sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk);
         pubLaserCloudFull_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 20);
@@ -1158,8 +1301,10 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc2_;
     #ifdef USE_LIVOX_DRIVER2
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_pcl_livox_;
+    rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_pcl_livox2_;
     #endif
 
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;

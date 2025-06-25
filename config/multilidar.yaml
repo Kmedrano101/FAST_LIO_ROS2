@@ -1,0 +1,74 @@
+/**:
+  ros__parameters:
+    multi_lidar: true                      # <--- Enable multi lidar mode!
+    feature_extract_enable: false
+    max_iteration: 3
+    filter_size_surf: 0.5
+    filter_size_map: 0.5
+    cube_side_length: 1000.0
+    runtime_pos_log_enable: false
+    map_file_path: "/home/kevin/tidop_xtract/src/fast_lio_ros2/PCD/sim_map.pcd"
+
+    common:
+      imu_topic:  "sim_imu/imu"
+      lid_topic:  "sim_lidar/lidar"      # Use lid_topic/lid_topic2 for backward compatibility
+      lid_topic2: "sim_lidar2/lidar"      # Second lidar topic
+
+    preprocess:
+      # --- Lidar 1 ---
+      lidar_type: 5                        # 1: AVIA, 2: Velodyne, 3: Ouster, 4: MID360, 5: Gazebo
+      scan_line: 16
+      blind: 0.01
+      scan_rate: 10
+      timestamp_unit: 3              # 0: second, 1: millisecond, 2: microsecond, 3: nanosecond
+      point_filter_num: 2            # downsampling points, default values: 3 or 2 for LiVOX, 4 for Ouster and Velodyne
+
+      # --- Lidar 2 ---
+      lidar_type2: 5
+      scan_line2: 16
+      blind2: 0.01
+      scan_rate2: 10
+      timestamp_unit2: 3             # 0: second, 1: millisecond, 2: microsecond, 3: nanosecond
+      point_filter_num2: 2           # downsampling points, default values: 3 or 2 for LiVOX, 4 for Ouster and Velodyne
+
+    mapping:
+      extrinsic_est_en: true        # Not supported yet for multi lidar
+      # --- Lidar 1 extrinsics (to base) ---
+      extrinsic_T: [0.0, 0.0, 0.29]         # <---- from SDF
+      extrinsic_R: [1., 0., 0.,
+                    0., 1., 0.,
+                    0., 0., 1.]             # Identity (no rotation)
+
+      # --- Lidar 2 extrinsics (to base) ---
+      extrinsic_T2: [0.0, 0.0, 0.12]       # Example translation
+      extrinsic_R2: [1., 0., 0.,
+                     0., 1., 0.,
+                     0., 0., 1.]            # Identity (no rotation)  
+
+      # --- Relative transform: Lidar2 w.r.t Lidar1 (if needed) ---
+      extrinsic_T_L2_wrt_L1: [0.0, 0.0, -0.17]   # (lidar2 - lidar1) = [0, 0, (0.12-0.29)]
+      extrinsic_R_L2_wrt_L1: [1., 0., 0.,
+                              0., 1., 0.,
+                              0., 0., 1.]        # Identity (no rotation)
+      
+      # --- Lidar1 w.r.t drone (if needed) ---
+      extrinsic_T_L1_wrt_drone: [0.0, 0.0, 0.29]
+      extrinsic_R_L1_wrt_drone: [1., 0., 0.,
+                                 0., 1., 0.,
+                                 0., 0., 1.]     # Identity (no rotation)
+
+      fov_degree: 180.0
+      det_range: 70.0
+
+    publish:
+      path_en: true
+      effect_map_en: false
+      map_en: true
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: true
+
+    pcd_save:
+      pcd_save_en: true
+      pcd_file_name: "sim_dense_map.pcd"
+      interval: -1

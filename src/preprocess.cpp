@@ -5,14 +5,23 @@
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
 
-Preprocess::Preprocess() : feature_enabled(0), lidar_type(AVIA), blind(0.01), point_filter_num(1)
+Preprocess::Preprocess()
 {
   inf_bound = 10;
-  N_SCANS = 6;
-  SCAN_RATE = 10;
+  lidar_type[LIDAR1] = 5;
+  lidar_type[LIDAR2] = 5;
+  point_filter_num[LIDAR1] = 3;
+  point_filter_num[LIDAR2] = 3;
+  N_SCANS[LIDAR1] = 6;
+  N_SCANS[LIDAR2] = 6;
+  SCAN_RATE[LIDAR1] = 10;
+  SCAN_RATE[LIDAR2] = 10;
+  time_unit[LIDAR1] = 2;
+  time_unit[LIDAR2] = 2;
+  blind[LIDAR1] = 0.1;
+  blind[LIDAR2] = 0.1;
   group_size = 8;
-  disA = 0.01;
-  disA = 0.1;  // B?
+  disA = 0.1;
   p2l_ratio = 225;
   limit_maxmid = 6.25;
   limit_midmin = 6.25;
@@ -36,68 +45,82 @@ Preprocess::~Preprocess()
 {
 }
 
-void Preprocess::set(bool feat_en, int lid_type, double bld, int pfilt_num)
+void Preprocess::set(bool feat_en)
 {
+  switch (time_unit[0])
+  {
+    case SEC:
+      time_unit_scale[0] = 1.e3f;
+      break;
+    case MS:
+      time_unit_scale[0] = 1.f;
+      break;
+    case US:
+      time_unit_scale[0] = 1.e-3f;
+      break;
+    case NS:
+      time_unit_scale[0] = 1.e-6f;
+      break;
+    default:
+      time_unit_scale[0] = 1.f;
+      break;
+  }
+  switch (time_unit[1])
+  {
+    case SEC:
+      time_unit_scale[1] = 1.e3f;
+      break;
+    case MS:
+      time_unit_scale[1] = 1.f;
+      break;
+    case US:
+      time_unit_scale[1] = 1.e-3f;
+      break;
+    case NS:
+      time_unit_scale[1] = 1.e-6f;
+      break;
+    default:
+      time_unit_scale[1] = 1.f;
+      break;
+  }
   feature_enabled = feat_en;
-  lidar_type = lid_type;
-  blind = bld;
-  point_filter_num = pfilt_num;
 }
 #ifdef USE_LIVOX_DRIVER2
-void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out)
+void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
 {
-  avia_handler(msg);
+  avia_handler(msg,lidar_num);
   *pcl_out = pl_surf;
 }
 #endif
 
-void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out)
+void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
 {
-  switch (time_unit)
-  {
-    case SEC:
-      time_unit_scale = 1.e3f;
-      break;
-    case MS:
-      time_unit_scale = 1.f;
-      break;
-    case US:
-      time_unit_scale = 1.e-3f;
-      break;
-    case NS:
-      time_unit_scale = 1.e-6f;
-      break;
-    default:
-      time_unit_scale = 1.f;
-      break;
-  }
-
-  switch (lidar_type)
+  switch (lidar_type[lidar_num])
   {
     case OUST64:
-      oust64_handler(msg);
+      oust64_handler(msg, lidar_num);
       break;
 
     case VELO16:
-      velodyne_handler(msg);
+      velodyne_handler(msg, lidar_num);
       break;
 
     case MID360:
-      mid360_handler(msg);
+      mid360_handler(msg, lidar_num);
       break;
     
     case GAZEBOSIM:
-      gazebo_handler(msg);
+      gazebo_handler(msg, lidar_num);
       break;
 
     default:
-      default_handler(msg);
+      default_handler(msg, lidar_num);
       break;
   }
   *pcl_out = pl_surf;
 }
 #ifdef USE_LIVOX_DRIVER2
-void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg)
+void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -110,7 +133,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
   pl_surf.reserve(plsize);
   pl_full.resize(plsize);
 
-  for (int i = 0; i < N_SCANS; i++)
+  for (int i = 0; i < N_SCANS[lidar_num]; i++)
   {
     pl_buff[i].clear();
     pl_buff[i].reserve(plsize);
@@ -121,7 +144,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
   {
     for (uint i = 1; i < plsize; i++)
     {
-      if ((msg->points[i].line < N_SCANS) &&
+      if ((msg->points[i].line < N_SCANS[lidar_num]) &&
           ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00))
       {
         pl_full[i].x = msg->points[i].x;
@@ -143,7 +166,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
     static double time = 0.0;
     count++;
     double t0 = omp_get_wtime();
-    for (int j = 0; j < N_SCANS; j++)
+    for (int j = 0; j < N_SCANS[lidar_num]; j++)
     {
       if (pl_buff[j].size() <= 5)
         continue;
@@ -162,7 +185,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
         types[i].dista = sqrt(vx * vx + vy * vy + vz * vz);
       }
       types[plsize].range = sqrt(pl[plsize].x * pl[plsize].x + pl[plsize].y * pl[plsize].y);
-      give_feature(pl, types);
+      give_feature(pl, types,lidar_num);
       // pl_surf += pl;
     }
     time += omp_get_wtime() - t0;
@@ -172,11 +195,11 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
   {
     for (uint i = 1; i < plsize; i++)
     {
-      if ((msg->points[i].line < N_SCANS) &&
+      if ((msg->points[i].line < N_SCANS[lidar_num]) &&
           ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00))
       {
         valid_num++;
-        if (valid_num % point_filter_num == 0)
+        if (valid_num % point_filter_num[lidar_num] == 0)
         {
           pl_full[i].x = msg->points[i].x;
           pl_full[i].y = msg->points[i].y;
@@ -188,7 +211,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
           if ((abs(pl_full[i].x - pl_full[i - 1].x) > 1e-7) || (abs(pl_full[i].y - pl_full[i - 1].y) > 1e-7) ||
               (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7) &&
                   (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z >
-                   (blind * blind)))
+                   (blind[lidar_num] * blind[lidar_num])))
           {
             pl_surf.push_back(pl_full[i]);
           }
@@ -198,7 +221,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
   }
 }
 #endif
-void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -210,7 +233,7 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   pl_surf.reserve(plsize);
   if (feature_enabled)
   {
-    for (int i = 0; i < N_SCANS; i++)
+    for (int i = 0; i < N_SCANS[lidar_num]; i++)
     {
       pl_buff[i].clear();
       pl_buff[i].reserve(plsize);
@@ -220,7 +243,7 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     {
       double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                      pl_orig.points[i].z * pl_orig.points[i].z;
-      if (range < (blind * blind))
+      if (range < (blind[lidar_num] * blind[lidar_num]))
         continue;
       Eigen::Vector3d pt_vec;
       PointType added_pt;
@@ -237,14 +260,14 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       if (yaw_angle <= -180.0)
         yaw_angle += 360.0;
 
-      added_pt.curvature = pl_orig.points[i].t * time_unit_scale;
-      if (pl_orig.points[i].ring < N_SCANS)
+      added_pt.curvature = pl_orig.points[i].t * time_unit_scale[lidar_num];
+      if (pl_orig.points[i].ring < N_SCANS[lidar_num])
       {
         pl_buff[pl_orig.points[i].ring].push_back(added_pt);
       }
     }
 
-    for (int j = 0; j < N_SCANS; j++)
+    for (int j = 0; j < N_SCANS[lidar_num]; j++)
     {
       PointCloudXYZI& pl = pl_buff[j];
       int linesize = pl.size();
@@ -261,23 +284,23 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
         types[i].dista = vx * vx + vy * vy + vz * vz;
       }
       types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
-      give_feature(pl, types);
+      give_feature(pl, types, lidar_num);
     }
   }
   else
   {
     double time_stamp = rclcpp::Time(msg->header.stamp).seconds();
     // cout << "===================================" << endl;
-    // printf("Pt size = %d, N_SCANS = %d\r\n", plsize, N_SCANS);
+    // printf("Pt size = %d, N_SCANS[LIDAR1] = %d\r\n", plsize, N_SCANS[LIDAR1]);
     for (int i = 0; i < pl_orig.points.size(); i++)
     {
-      if (i % point_filter_num != 0)
+      if (i % point_filter_num[lidar_num] != 0)
         continue;
 
       double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                      pl_orig.points[i].z * pl_orig.points[i].z;
 
-      if (range < (blind * blind))
+      if (range < (blind[lidar_num] * blind[lidar_num]))
         continue;
 
       Eigen::Vector3d pt_vec;
@@ -289,7 +312,7 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       added_pt.normal_x = 0;
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
-      added_pt.curvature = pl_orig.points[i].t * time_unit_scale;  // curvature unit: ms
+      added_pt.curvature = pl_orig.points[i].t * time_unit_scale[lidar_num];  // curvature unit: ms
 
       pl_surf.points.push_back(added_pt);
     }
@@ -298,7 +321,7 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   // pub_func(pl_surf, pub_corn, msg->header.stamp);
 }
 
-void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -312,11 +335,11 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
   pl_surf.reserve(plsize);
 
   /*** These variables only works when no point timestamps given ***/
-  double omega_l = 0.361 * SCAN_RATE;  // scan angular velocity
-  std::vector<bool> is_first(N_SCANS, true);
-  std::vector<double> yaw_fp(N_SCANS, 0.0);    // yaw of first scan point
-  std::vector<float> yaw_last(N_SCANS, 0.0);   // yaw of last scan point
-  std::vector<float> time_last(N_SCANS, 0.0);  // last offset time
+  double omega_l = 0.361 * SCAN_RATE[lidar_num];  // scan angular velocity
+  std::vector<bool> is_first(N_SCANS[lidar_num], true);
+  std::vector<double> yaw_fp(N_SCANS[lidar_num], 0.0);    // yaw of first scan point
+  std::vector<float> yaw_last(N_SCANS[lidar_num], 0.0);   // yaw of last scan point
+  std::vector<float> time_last(N_SCANS[lidar_num], 0.0);  // last offset time
   /*****************************************************************/
 
   if (pl_orig.points[plsize - 1].time > 0)
@@ -341,7 +364,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
 
   if (feature_enabled)
   {
-    for (int i = 0; i < N_SCANS; i++)
+    for (int i = 0; i < N_SCANS[lidar_num]; i++)
     {
       pl_buff[i].clear();
       pl_buff[i].reserve(plsize);
@@ -354,13 +377,13 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
       int layer = pl_orig.points[i].ring;
-      if (layer >= N_SCANS)
+      if (layer >= N_SCANS[lidar_num])
         continue;
       added_pt.x = pl_orig.points[i].x;
       added_pt.y = pl_orig.points[i].y;
       added_pt.z = pl_orig.points[i].z;
       added_pt.intensity = pl_orig.points[i].intensity;
-      added_pt.curvature = pl_orig.points[i].time * time_unit_scale;  // units: ms
+      added_pt.curvature = pl_orig.points[i].time * time_unit_scale[lidar_num];  // units: ms
 
       if (!given_offset_time)
       {
@@ -395,7 +418,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
       pl_buff[layer].points.push_back(added_pt);
     }
 
-    for (int j = 0; j < N_SCANS; j++)
+    for (int j = 0; j < N_SCANS[lidar_num]; j++)
     {
       PointCloudXYZI& pl = pl_buff[j];
       int linesize = pl.size();
@@ -414,7 +437,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
         types[i].dista = vx * vx + vy * vy + vz * vz;
       }
       types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
-      give_feature(pl, types);
+      give_feature(pl, types, lidar_num);
     }
   }
   else
@@ -432,7 +455,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
       added_pt.z = pl_orig.points[i].z;
       added_pt.intensity = pl_orig.points[i].intensity;
       added_pt.curvature =
-          pl_orig.points[i].time * time_unit_scale;  // curvature unit: ms // cout<<added_pt.curvature<<endl;
+          pl_orig.points[i].time * time_unit_scale[lidar_num];  // curvature unit: ms // cout<<added_pt.curvature<<endl;
 
       if (!given_offset_time)
       {
@@ -467,9 +490,9 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
         time_last[layer] = added_pt.curvature;
       }
 
-      if (i % point_filter_num == 0)
+      if (i % point_filter_num[lidar_num] == 0)
       {
-        if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind * blind))
+        if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind[lidar_num] * blind[lidar_num]))
         {
           pl_surf.points.push_back(added_pt);
         }
@@ -478,7 +501,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
   }
 }
 
-void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -492,11 +515,11 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   pl_surf.reserve(plsize);
 
   /*** These variables only works when no point timestamps given ***/
-  double omega_l = 0.361 * SCAN_RATE;  // scan angular velocity
-  std::vector<bool> is_first(N_SCANS, true);
-  std::vector<double> yaw_fp(N_SCANS, 0.0);    // yaw of first scan point
-  std::vector<float> yaw_last(N_SCANS, 0.0);   // yaw of last scan point
-  std::vector<float> time_last(N_SCANS, 0.0);  // last offset time
+  double omega_l = 0.361 * SCAN_RATE[lidar_num];  // scan angular velocity
+  std::vector<bool> is_first(N_SCANS[lidar_num], true);
+  std::vector<double> yaw_fp(N_SCANS[lidar_num], 0.0);    // yaw of first scan point
+  std::vector<float> yaw_last(N_SCANS[lidar_num], 0.0);   // yaw of last scan point
+  std::vector<float> time_last(N_SCANS[lidar_num], 0.0);  // last offset time
   /*****************************************************************/
 
   given_offset_time = false;
@@ -554,14 +577,14 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     yaw_last[layer] = yaw_angle;
     time_last[layer] = added_pt.curvature;
 
-    if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind * blind))
+    if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind[lidar_num] * blind[lidar_num]))
     {
       pl_surf.push_back(std::move(added_pt));
     }
   }
 }
 
-void Preprocess::default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+void Preprocess::default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -586,14 +609,14 @@ void Preprocess::default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr 
     added_pt.intensity = pl_orig.points[i].intensity;
     added_pt.curvature = 0.;
 
-    if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind * blind))
+    if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind[lidar_num] * blind[lidar_num]))
     {
       pl_surf.push_back(std::move(added_pt));
     }
   }
 }
 
-void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
   pl_corn.clear();
@@ -608,7 +631,8 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
 
   if (feature_enabled)
   {
-    for (int i = 0; i < N_SCANS; i++)
+    // Use per-lidar N_SCANS
+    for (int i = 0; i < N_SCANS[lidar_num]; i++)
     {
       pl_buff[i].clear();
       pl_buff[i].reserve(plsize);
@@ -619,7 +643,7 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       double range = pl_orig.points[i].x * pl_orig.points[i].x +
                      pl_orig.points[i].y * pl_orig.points[i].y +
                      pl_orig.points[i].z * pl_orig.points[i].z;
-      if (range < (blind * blind))
+      if (range < (blind[lidar_num] * blind[lidar_num]))
         continue;
 
       PointType added_pt;
@@ -630,18 +654,16 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       added_pt.normal_x = 0;
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
-
-      // Optionally, add curvature based on scan index or timestamp (here set to 0)
       added_pt.curvature = 0.;
 
-      // Use ring field to assign to scan line
-      if (pl_orig.points[i].ring < N_SCANS)
+      // Use per-lidar N_SCANS
+      if (pl_orig.points[i].ring < N_SCANS[lidar_num])
       {
         pl_buff[pl_orig.points[i].ring].push_back(added_pt);
       }
     }
 
-    for (int j = 0; j < N_SCANS; j++)
+    for (int j = 0; j < N_SCANS[lidar_num]; j++)
     {
       PointCloudXYZI& pl = pl_buff[j];
       int linesize = pl.size();
@@ -658,7 +680,7 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
         types[i].dista = vx * vx + vy * vy + vz * vz;
       }
       types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
-      give_feature(pl, types);
+      give_feature(pl, types, lidar_num);
     }
   }
   else
@@ -666,13 +688,13 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     // "Simple" mode: just filter, copy, and optionally downsample
     for (int i = 0; i < pl_orig.points.size(); i++)
     {
-      if (i % point_filter_num != 0)
+      if (i % point_filter_num[lidar_num] != 0)
         continue;
 
       double range = pl_orig.points[i].x * pl_orig.points[i].x +
                      pl_orig.points[i].y * pl_orig.points[i].y +
                      pl_orig.points[i].z * pl_orig.points[i].z;
-      if (range < (blind * blind))
+      if (range < (blind[lidar_num] * blind[lidar_num]))
         continue;
 
       PointType added_pt;
@@ -690,7 +712,7 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   }
 }
 
-void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& types)
+void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& types, const int &lidar_num)
 {
   int plsize = pl.size();
   int plsize2;
@@ -701,7 +723,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
   }
   uint head = 0;
 
-  while (types[head].range < blind)
+  while (types[head].range < blind[lidar_num])
   {
     head++;
   }
@@ -720,14 +742,14 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
 
   for (uint i = head; i < plsize2; i++)
   {
-    if (types[i].range < blind)
+    if (types[i].range < blind[lidar_num])
     {
       continue;
     }
 
     i2 = i;
 
-    plane_type = plane_judge(pl, types, i, i_nex, curr_direct);
+    plane_type = plane_judge(pl, types, i, i_nex, curr_direct,lidar_num);
 
     if (plane_type == 1)
     {
@@ -774,7 +796,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
   plsize2 = plsize > 3 ? plsize - 3 : 0;
   for (uint i = head + 3; i < plsize2; i++)
   {
-    if (types[i].range < blind || types[i].ftype >= Real_Plane)
+    if (types[i].range < blind[lidar_num] || types[i].ftype >= Real_Plane)
     {
       continue;
     }
@@ -795,7 +817,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
         m = 1;
       }
 
-      if (types[i + m].range < blind)
+      if (types[i + m].range < blind[lidar_num])
       {
         if (types[i].range > inf_bound)
         {
@@ -828,7 +850,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
     {
       if (types[i].intersect > cos160)
       {
-        if (edge_jump_judge(pl, types, i, Prev))
+        if (edge_jump_judge(pl, types, i, Prev,lidar_num))
         {
           types[i].ftype = Edge_Jump;
         }
@@ -839,7 +861,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
     {
       if (types[i].intersect > cos160)
       {
-        if (edge_jump_judge(pl, types, i, Next))
+        if (edge_jump_judge(pl, types, i, Next, lidar_num))
         {
           types[i].ftype = Edge_Jump;
         }
@@ -847,14 +869,14 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
     }
     else if (types[i].edj[Prev] == Nr_nor && types[i].edj[Next] == Nr_inf)
     {
-      if (edge_jump_judge(pl, types, i, Prev))
+      if (edge_jump_judge(pl, types, i, Prev,lidar_num))
       {
         types[i].ftype = Edge_Jump;
       }
     }
     else if (types[i].edj[Prev] == Nr_inf && types[i].edj[Next] == Nr_nor)
     {
-      if (edge_jump_judge(pl, types, i, Next))
+      if (edge_jump_judge(pl, types, i, Next,lidar_num))
       {
         types[i].ftype = Edge_Jump;
       }
@@ -872,7 +894,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
   double ratio;
   for (uint i = head + 1; i < plsize2; i++)
   {
-    if (types[i].range < blind || types[i - 1].range < blind || types[i + 1].range < blind)
+    if (types[i].range < blind[lidar_num] || types[i - 1].range < blind[lidar_num] || types[i + 1].range < blind[lidar_num])
     {
       continue;
     }
@@ -918,7 +940,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType>& pl, vector<orgtype>& t
         last_surface = j;
       }
 
-      if (j == uint(last_surface + point_filter_num - 1))
+      if (j == uint(last_surface + point_filter_num[lidar_num] - 1))
       {
         PointType ap;
         ap.x = pl[j].x;
@@ -971,7 +993,7 @@ void Preprocess::pub_func(PointCloudXYZI& pl, const rclcpp::Time& ct)
 }
 
 int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, uint i_cur, uint& i_nex,
-                            Eigen::Vector3d& curr_direct)
+                            Eigen::Vector3d& curr_direct, const int &lidar_num)
 {
   double group_dis = disA * types[i_cur].range + disB;
   group_dis = group_dis * group_dis;
@@ -983,7 +1005,7 @@ int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, ui
 
   for (i_nex = i_cur; i_nex < i_cur + group_size; i_nex++)
   {
-    if (types[i_nex].range < blind)
+    if (types[i_nex].range < blind[lidar_num])
     {
       curr_direct.setZero();
       return 2;
@@ -996,7 +1018,7 @@ int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, ui
     if ((i_cur >= pl.size()) || (i_nex >= pl.size()))
       break;
 
-    if (types[i_nex].range < blind)
+    if (types[i_nex].range < blind[lidar_num])
     {
       curr_direct.setZero();
       return 2;
@@ -1060,7 +1082,7 @@ int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, ui
     return 0;
   }
 
-  if (lidar_type == AVIA)
+  if (lidar_type[lidar_num] == AVIA)
   {
     double dismax_mid = disarr[0] / disarr[disarrsize / 2];
     double dismid_min = disarr[disarrsize / 2] / disarr[disarrsize - 2];
@@ -1086,18 +1108,18 @@ int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, ui
   return 1;
 }
 
-bool Preprocess::edge_jump_judge(const PointCloudXYZI& pl, vector<orgtype>& types, uint i, Surround nor_dir)
+bool Preprocess::edge_jump_judge(const PointCloudXYZI& pl, vector<orgtype>& types, uint i, Surround nor_dir, const int &lidar_num)
 {
   if (nor_dir == 0)
   {
-    if (types[i - 1].range < blind || types[i - 2].range < blind)
+    if (types[i - 1].range < blind[lidar_num] || types[i - 2].range < blind[lidar_num])
     {
       return false;
     }
   }
   else if (nor_dir == 1)
   {
-    if (types[i + 1].range < blind || types[i + 2].range < blind)
+    if (types[i + 1].range < blind[lidar_num] || types[i + 2].range < blind[lidar_num])
     {
       return false;
     }
