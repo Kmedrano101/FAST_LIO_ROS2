@@ -1035,7 +1035,7 @@ public:
             // Single lidar setup
             if (p_pre->lidar_type[LIDAR1] == AVIA)
             {
-                RCLCPP_INFO(rclcpp::get_logger(), "Using Single LiDAR setup with Livoxdriver2 type.");
+                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livoxdriver2 type.");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR1], 20, livox_pcl_cbk);
@@ -1046,7 +1046,7 @@ public:
             }
             else
             {
-                RCLCPP_INFO(rclcpp::get_logger(), "Using Single LiDAR setup with PointCloud2 type.");
+                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with PointCloud2 type.");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR1], 20, standard_pcl_cbk);
             }
