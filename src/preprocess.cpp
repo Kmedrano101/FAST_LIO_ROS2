@@ -86,40 +86,6 @@ void Preprocess::set(bool feat_en)
   feature_enabled = feat_en;
 }
 #ifdef USE_LIVOX_DRIVER2
-void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
-{
-  avia_handler(msg,lidar_num);
-  *pcl_out = pl_surf;
-}
-#endif
-
-void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
-{
-  switch (lidar_type[lidar_num])
-  {
-    case OUST64:
-      oust64_handler(msg, lidar_num);
-      break;
-
-    case VELO16:
-      velodyne_handler(msg, lidar_num);
-      break;
-
-    case MID360:
-      mid360_handler(msg, lidar_num);
-      break;
-    
-    case GAZEBOSIM:
-      gazebo_handler(msg, lidar_num);
-      break;
-
-    default:
-      default_handler(msg, lidar_num);
-      break;
-  }
-  *pcl_out = pl_surf;
-}
-#ifdef USE_LIVOX_DRIVER2
 void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();
@@ -220,7 +186,40 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
     }
   }
 }
+void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
+{
+  avia_handler(msg,lidar_num);
+  *pcl_out = pl_surf;
+}
 #endif
+
+void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out, const int &lidar_num)
+{
+  switch (lidar_type[lidar_num])
+  {
+    case OUST64:
+      oust64_handler(msg, lidar_num);
+      break;
+
+    case VELO16:
+      velodyne_handler(msg, lidar_num);
+      break;
+
+    case MID360:
+      mid360_handler(msg, lidar_num);
+      break;
+    
+    case GAZEBOSIM:
+      gazebo_handler(msg, lidar_num);
+      break;
+
+    default:
+      default_handler(msg, lidar_num);
+      break;
+  }
+  *pcl_out = pl_surf;
+}
+
 void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num)
 {
   pl_surf.clear();

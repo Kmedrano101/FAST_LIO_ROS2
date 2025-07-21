@@ -393,7 +393,7 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);
+    p_pre->process(msg, ptr, lidar_id);
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(last_timestamp_lidar[lidar_id]);
     
@@ -1080,7 +1080,7 @@ public:
             {
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox2_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-                    lid_topic[LIDAR2], 20, livox_pcl_cbk2);
+                    lid_topic[LIDAR2], 20, livox_pcl_cbk);
 #else
                 RCLCPP_WARN(this->get_logger(),
                             "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type2 to a supported type.");
