@@ -1262,15 +1262,40 @@ private:
             state_point = kf.get_x();
             euler_cur = SO3ToEuler(state_point.rot);
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
-            geoQuat.x = state_point.rot.coeffs()[0];
-            geoQuat.y = state_point.rot.coeffs()[1];
-            geoQuat.z = state_point.rot.coeffs()[2];
-            geoQuat.w = state_point.rot.coeffs()[3];
+
+            // Apply 180° rotation around Z-axis to align body frame with PX4 convention
+            // This makes RViz arrow point in the same direction as drone's front
+            // AND makes positive X-axis point forward (same direction as arrow)
+
+            // Rotate orientation: q_rotated = q_180z * q_original
+            // q_180z = (w=0, x=0, y=0, z=1) for 180° around Z
+            Eigen::Quaterniond q_original(state_point.rot.coeffs()[3], state_point.rot.coeffs()[0],
+                                           state_point.rot.coeffs()[1], state_point.rot.coeffs()[2]);
+            Eigen::Quaterniond q_180z(0.0, 0.0, 0.0, 1.0);  // 180° around Z-axis
+            Eigen::Quaterniond q_rotated = q_180z * q_original;
+
+            geoQuat.x = q_rotated.x();
+            geoQuat.y = q_rotated.y();
+            geoQuat.z = q_rotated.z();
+            geoQuat.w = q_rotated.w();
+
+            // Save original position (needed for map_incremental later)
+            V3D original_pos = state_point.pos;
+
+            // Apply coordinate transform to match PX4/Aviation convention:
+            // - Flip X to make positive X = forward (same direction as body arrow)
+            // - Keep Y as-is to maintain positive Y = right (aviation convention)
+            state_point.pos(0) = -state_point.pos(0);
+            // state_point.pos(1) = -state_point.pos(1);  // Don't flip Y for aviation convention
+            // Z remains unchanged
 
             double t_update_end = omp_get_wtime();
 
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped_, tf_broadcaster_);
+
+            // Restore original position for map building
+            state_point.pos = original_pos;
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
