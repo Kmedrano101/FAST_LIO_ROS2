@@ -182,7 +182,7 @@ class Preprocess
 
 private:
   #ifdef USE_LIVOX_DRIVER2
-    void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg);
+    void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, const int &lidar_num);
   #endif
   void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, const int &lidar_num);

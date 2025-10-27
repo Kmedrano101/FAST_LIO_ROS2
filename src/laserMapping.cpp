@@ -394,10 +394,50 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);
+    p_pre->process(msg, ptr, lidar_id);
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(last_timestamp_lidar[lidar_id]);
     
+    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    mtx_buffer.unlock();
+    sig_buffer.notify_all();
+}
+
+void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
+{
+    const int lidar_id = 1;
+    mtx_buffer.lock();
+    double cur_time = get_time_sec(msg->header.stamp);
+    double preprocess_start_time = omp_get_wtime();
+    scan_count[lidar_id] ++;
+    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+    {
+        std::cerr << "lidar loop back, clear buffer" << std::endl;
+        lidar_buffer.clear();
+    }
+    if(is_first_lidar[lidar_id])
+    {
+        is_first_lidar[lidar_id] = false;
+    }
+    last_timestamp_lidar[lidar_id] = cur_time;
+
+    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+    {
+        printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+    }
+
+    if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
+    {
+        timediff_set_flg = true;
+        timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
+        printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
+    }
+
+    PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
+    p_pre->process(msg, ptr, lidar_id);
+    lidar_buffer.push_back(ptr);
+    time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
     s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
