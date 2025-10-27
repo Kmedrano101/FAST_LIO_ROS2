@@ -7,7 +7,7 @@
         filter_size_map: 0.06
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
-        map_file_path: "/home/kevin/tidop_xtract/src/fast_lio_ros2/PCD/sim_map.pcd"
+        map_file_path: "/home/kmedrano/ros2_ws/src/fast_lio_ros2/PCD/sim_map.pcd"
 
         common:
             lid_topic:  "/sim_lidar/lidar"
@@ -35,10 +35,11 @@
             scan_publish_en:  true       # false: close all the point cloud output
             dense_publish_en: false      # false: low down the points number in a global-frame point clouds scan.
             scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
+            map_frame_id: "world"        # Frame ID for map/odometry (default: camera_init, use "world" for SUPER integration)
 
         pcd_save:
-            pcd_save_en: true
+            pcd_save_en: false           # Disabled to prevent memory issues during testing
             pcd_file_name: "sim_dense_map.pcd"
-            interval: -1                 # how many LiDAR frames saved in each pcd file; 
+            interval: 100                # Save every 100 frames to prevent memory crash
                                         # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
     
