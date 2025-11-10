@@ -1,0 +1,54 @@
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 3
+        max_iteration: 3
+        filter_size_surf: 0.2          # Indoor mobile robot - smaller voxel size
+        filter_size_map: 0.2
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "/home/kmedrano/test_ws/mobile_robot_map.pcd"
+
+        common:
+            lid_topic:  "/points_raw"           # Velodyne VLP-16 topic (matches LIO-SAM)
+            imu_topic:  "/imu_plugin/out"       # IMU topic from Gazebo plugin (matches LIO-SAM)
+            time_sync_en: false
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            lidar_type: 2                       # Velodyne LiDAR
+            scan_line: 16                       # VLP-16 has 16 rings (NOT 32!)
+            scan_rate: 10                       # 10 Hz from robot URDF
+            timestamp_unit: 2                   # microsecond
+            blind: 1.0                          # Min range 1m (matches LIO-SAM)
+
+        mapping:
+            # IMU noise parameters from LIO-SAM config
+            acc_cov: 3.9939570888238808e-03     # imuAccNoise from LIO-SAM
+            gyr_cov: 1.5636343949698187e-03     # imuGyrNoise from LIO-SAM
+            b_acc_cov: 6.4356659353532566e-05   # imuAccBiasN from LIO-SAM
+            b_gyr_cov: 3.5640318696367613e-05   # imuGyrBiasN from LIO-SAM
+
+            fov_degree: 360.0
+            det_range: 100.0
+
+            extrinsic_est_en: false             # Disable online estimation - use known calibration
+            extrinsic_T: [0.0, 0.0, -0.065]     # LiDAR to IMU offset (from TF: velodyne to imu_link)
+            extrinsic_R: [1.0, 0.0, 0.0,        # Identity rotation (both sensors have same orientation)
+                         0.0, 1.0, 0.0,
+                         0.0, 0.0, 1.0]
+
+        publish:
+            path_en: true                       # Enable path visualization
+            effect_map_en: false
+            map_en: true
+            scan_publish_en: true
+            dense_publish_en: false             # Disable for performance
+            scan_bodyframe_pub_en: true
+            map_frame_id: "map"                 # Use "map" frame (matches LIO-SAM)
+            body_frame_id: "base_link"          # Mobile robot body frame (not "drone")
+
+        pcd_save:
+            pcd_save_en: false                  # Disable during testing to prevent memory issues
+            pcd_file_name: "mobile_robot_map.pcd"
+            interval: 100                       # Save every 100 frames if enabled

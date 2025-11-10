@@ -43,6 +43,18 @@ def generate_launch_description():
         description='RViz config file path'
     )
 
+    # Static transform: world (Gazebo ground) -> camera_init (FAST-LIO map origin)
+    # Set z to match drone's initial spawn height + sensor offset
+    # Drone spawns at ~0.2m, sensors are at +0.29m above drone base = ~0.49m total
+    # Adjust this value to match your drone's actual spawn height in Gazebo
+    static_tf_world_to_camera_init = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_world_to_camera_init',
+        arguments=['0', '0', '0.5', '0', '0', '0', 'world', 'camera_init'],
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
     fast_lio_node = Node(
         package='fast_lio_ros2',
         executable='fastlio_mapping',
@@ -65,7 +77,8 @@ def generate_launch_description():
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
 
+    ld.add_action(static_tf_world_to_camera_init)
     ld.add_action(fast_lio_node)
-    #ld.add_action(rviz_node)
+    ld.add_action(rviz_node)
 
     return ld

@@ -78,6 +78,7 @@ int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delet
 bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
 bool   traj_save_en = false, async_debug = false;
 string map_frame_id = "camera_init";  // Configurable map frame ID (default: camera_init, can be set to world)
+string body_frame_id = "drone";        // Configurable body/child frame ID (default: drone, can be set to base_link)
 
 /********* MULTI-LIDAR Support ********/
 bool multi_lidar = false;
@@ -669,7 +670,7 @@ void publish_frame_body(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shared
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
-    laserCloudmsg.header.frame_id = "body";
+    laserCloudmsg.header.frame_id = body_frame_id;
     pubLaserCloudFull_body->publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -733,7 +734,7 @@ void set_posestamp(T & out)
 void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped, std::unique_ptr<tf2_ros::TransformBroadcaster> & tf_br)
 {
     odomAftMapped.header.frame_id = map_frame_id;
-    odomAftMapped.child_frame_id = "body";
+    odomAftMapped.child_frame_id = body_frame_id;
     odomAftMapped.header.stamp = get_ros_time(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped->publish(odomAftMapped);
@@ -750,8 +751,9 @@ void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPt
     }
 
     geometry_msgs::msg::TransformStamped trans;
+    trans.header.stamp = get_ros_time(lidar_end_time);
     trans.header.frame_id = map_frame_id;
-    trans.child_frame_id = "body";
+    trans.child_frame_id = body_frame_id;
     trans.transform.translation.x = odomAftMapped.pose.pose.position.x;
     trans.transform.translation.y = odomAftMapped.pose.pose.position.y;
     trans.transform.translation.z = odomAftMapped.pose.pose.position.z;
@@ -983,6 +985,7 @@ public:
         this->get_parameter_or<bool>("publish.dense_publish_en", dense_pub_en, true);
         this->get_parameter_or<bool>("publish.scan_bodyframe_pub_en", scan_body_pub_en, true);
         this->get_parameter_or<string>("publish.map_frame_id", map_frame_id, string("camera_init"));
+        this->get_parameter_or<string>("publish.body_frame_id", body_frame_id, string("drone"));
         this->get_parameter_or<int>("max_iteration", NUM_MAX_ITERATIONS, 4);
         this->get_parameter_or<string>("map_file_path", map_file_path, string(ROOT_DIR) + "PCD/map.pcd");
         this->get_parameter_or<bool>("multi_lidar", multi_lidar, false);
@@ -1263,39 +1266,17 @@ private:
             euler_cur = SO3ToEuler(state_point.rot);
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
-            // Apply 180° rotation around Z-axis to align body frame with PX4 convention
-            // This makes RViz arrow point in the same direction as drone's front
-            // AND makes positive X-axis point forward (same direction as arrow)
-
-            // Rotate orientation: q_rotated = q_180z * q_original
-            // q_180z = (w=0, x=0, y=0, z=1) for 180° around Z
-            Eigen::Quaterniond q_original(state_point.rot.coeffs()[3], state_point.rot.coeffs()[0],
-                                           state_point.rot.coeffs()[1], state_point.rot.coeffs()[2]);
-            Eigen::Quaterniond q_180z(0.0, 0.0, 0.0, 1.0);  // 180° around Z-axis
-            Eigen::Quaterniond q_rotated = q_180z * q_original;
-
-            geoQuat.x = q_rotated.x();
-            geoQuat.y = q_rotated.y();
-            geoQuat.z = q_rotated.z();
-            geoQuat.w = q_rotated.w();
-
-            // Save original position (needed for map_incremental later)
-            V3D original_pos = state_point.pos;
-
-            // Apply coordinate transform to match PX4/Aviation convention:
-            // - Flip X to make positive X = forward (same direction as body arrow)
-            // - Keep Y as-is to maintain positive Y = right (aviation convention)
-            state_point.pos(0) = -state_point.pos(0);
-            // state_point.pos(1) = -state_point.pos(1);  // Don't flip Y for aviation convention
-            // Z remains unchanged
+            // Pass through orientation and position without transformation
+            // to maintain consistency between odometry and point cloud registration
+            geoQuat.x = state_point.rot.coeffs()[0];
+            geoQuat.y = state_point.rot.coeffs()[1];
+            geoQuat.z = state_point.rot.coeffs()[2];
+            geoQuat.w = state_point.rot.coeffs()[3];
 
             double t_update_end = omp_get_wtime();
 
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped_, tf_broadcaster_);
-
-            // Restore original position for map building
-            state_point.pos = original_pos;
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();

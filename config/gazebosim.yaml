@@ -1,32 +1,43 @@
 /**:
     ros__parameters:
         feature_extract_enable: false
-        point_filter_num: 3
-        max_iteration: 3
-        filter_size_surf: 0.06
-        filter_size_map: 0.06
+        point_filter_num: 3           # Downsample to reduce computational load
+        max_iteration: 10             # Balanced iterations for convergence
+        filter_size_surf: 0.1         # Larger voxel size prevents PCL integer overflow
+        filter_size_map: 0.1          # Larger voxel size for stable mapping
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
         map_file_path: "/home/kmedrano/ros2_ws/src/fast_lio_ros2/PCD/sim_map.pcd"
 
         common:
-            lid_topic:  "/sim_lidar/lidar"
-            imu_topic:  "/sim_imu/imu"                  # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
+            lid_topic:  "/px4_offboard_sim/sim_lidar/data"
+            imu_topic:  "/px4_offboard_sim/sim_imu/data"
+            time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
+            time_offset_lidar_to_imu: 0.0 # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
 
         preprocess:
           lidar_type: 5       # 1 AVIA LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for MID360 LiDAR, 5 for Gazebosim LiDAR
-          scan_line:  16      # or however many rings your sim publishes
-          blind:      0.01
-          scan_rate:  10
+          scan_line:  128     # 128 vertical samples (rings) - matches SDF configuration (2048×128 point cloud)
+          blind:      0.3     # Minimum range 0.3m - filters out drone self-detection
+          scan_rate:  10      # 10 Hz - matches SDF update_rate
+          timestamp_unit: 2   # 0: seconds, 1: milliseconds, 2: microseconds, 3: nanoseconds
 
         mapping:
-          extrinsic_est_en: true
-          extrinsic_T: [0.120, 0.03, 0.242]
+          # IMU noise parameters - very low for near-perfect simulation data
+          # Low covariances = high trust in sensors = stable, smooth SLAM
+          acc_cov: 0.0001     # Very low - clean simulated IMU data
+          gyr_cov: 0.00001    # Very low - clean gyroscope data
+          b_acc_cov: 0.00001  # Very low - minimal bias in simulation
+          b_gyr_cov: 0.00001  # Very low - minimal bias drift
+
+          # Extrinsic calibration (LiDAR to IMU)
+          extrinsic_est_en: false  # Disable online estimation - use fixed calibration for simulation
+          extrinsic_T: [0.0, 0.0, 0.0]  # LiDAR to IMU: Both sensors co-located in lidar_link_1
           extrinsic_R: [ 1., 0., 0.,
-                          0., 1., 0.,
-                          0., 0., 1.] # identity
-          fov_degree: 180.0              # horizontal FOV, if you want to clamp
-          det_range:  60.0
+                         0., 1., 0.,
+                         0., 0., 1.] # identity - both aligned with lidar_link_1
+          fov_degree: 360.0              # horizontal FOV (full 360° - matches SDF)
+          det_range:  30.0               # Maximum detection range 30m - matches SDF range.max
         
         publish:
             path_en: true                # true: publish Path
@@ -35,7 +46,8 @@
             scan_publish_en:  true       # false: close all the point cloud output
             dense_publish_en: false      # false: low down the points number in a global-frame point clouds scan.
             scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
-            map_frame_id: "world"        # Frame ID for map/odometry (default: camera_init, use "world" for SUPER integration)
+            map_frame_id: "camera_init"  # FAST-LIO initialization frame (aligned to world via static TF)
+            body_frame_id: "drone"        # FAST-LIO body frame (renamed to avoid conflict with drone_gt)
 
         pcd_save:
             pcd_save_en: false           # Disabled to prevent memory issues during testing

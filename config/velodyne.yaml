@@ -1,48 +1,52 @@
 /**:
     ros__parameters:
         feature_extract_enable: false
-        point_filter_num: 4
+        point_filter_num: 3
         max_iteration: 3
-        filter_size_surf: 0.5
-        filter_size_map: 0.5
+        filter_size_surf: 0.09          # Optimized for Gazebo simulation (128-ring dense data)
+        filter_size_map: 0.09
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
-        map_file_path: "./test.pcd"
+        map_file_path: "/home/kmedrano/ros2_ws/src/fast_lio_ros2/PCD/velodyne_sim_map.pcd"
 
         common:
-            lid_topic:  "/velodyne_points"
-            imu_topic:  "/imu/data"
-            time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
-            time_offset_lidar_to_imu: 0.0 # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).
-                                        # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
+            lid_topic:  "velodyne_points"  # Output from lidar_imu_sync_node (relative path)
+            imu_topic:  "imu/data"         # Output from lidar_imu_sync_node (relative path)
+            time_sync_en: false             # Sync handled by lidar_imu_sync_node
+            time_offset_lidar_to_imu: 0.0   # Calibrated in lidar_imu_sync_node
 
         preprocess:
-            lidar_type: 2                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 
-            scan_line: 32
-            scan_rate: 10                # only need to be set for velodyne, unit: Hz,
-            timestamp_unit: 2            # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
-            blind: 2.0
+            lidar_type: 2                # 2 for Velodyne LiDAR (converted by sync node)
+            scan_line: 128               # Gazebo publishes 128 vertical samples (rings) - UPDATED FOR GAZEBO
+            scan_rate: 10                # Hz - MUST match lidar_imu_sync_node config
+            timestamp_unit: 2            # Microseconds (time field added by sync node)
+            blind: 0.01                  # Minimum range (m) - optimized for indoor Gazebo sim
 
         mapping:
             acc_cov: 0.1
             gyr_cov: 0.1
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
-            fov_degree:    360.0
-            det_range:     100.0
-            extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic,
-            extrinsic_T: [ 0., 0., 0.28]
-            extrinsic_R: [ 1., 0., 0., 
-                        0., 1., 0., 
-                        0., 0., 1.]
+            fov_degree: 360.0
+            det_range: 60.0              # Detection range (m) - optimized for Gazebo environment
+            extrinsic_est_en: false      # Disable online estimation, use fixed calibration
+            extrinsic_T: [0.0, 0.0, 0.29]  # LiDAR to drone body: LiDAR is 0.29m above drone body (matches Gazebo)
+            extrinsic_R: [ 1., 0., 0.,
+                          0., 1., 0.,
+                          0., 0., 1.]    # Identity - both aligned (FLU frame)
 
         publish:
-            path_en:  false
-            scan_publish_en:  true       # false: close all the point cloud output
-            dense_publish_en: true       # false: low down the points number in a global-frame point clouds scan.
-            scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
+            path_en: true                # Enable path visualization
+            effect_map_en: false         # Disable effects to save computation
+            map_en: true                 # Enable map publishing
+            scan_publish_en: true        # Enable scan output
+            dense_publish_en: false      # Reduce density for better performance
+            scan_bodyframe_pub_en: true  # Output scans in body frame
+            map_frame_id: "camera_init"  # FAST-LIO initialization frame (not true world origin)
+            body_frame_id: "drone"       # Moving drone body frame
 
         pcd_save:
-            pcd_save_en: true
-            interval: -1                 # how many LiDAR frames saved in each pcd file; 
-                                        # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+            pcd_save_en: false           # Disabled for real-time testing
+            pcd_file_name: "velodyne_sim_map.pcd"
+            interval: 100                # Save every 100 frames if enabled
+                                        # -1 : all frames in ONE file (may cause memory issues)

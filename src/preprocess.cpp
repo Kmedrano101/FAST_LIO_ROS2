@@ -626,8 +626,18 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   pcl::PointCloud<gazebo_ros::GazeboPointXyzir> pl_orig;
   pcl::fromROSMsg(*msg, pl_orig);
   int plsize = pl_orig.points.size();
+  if (plsize == 0)
+    return;
   pl_corn.reserve(plsize);
   pl_surf.reserve(plsize);
+
+  /*** Timestamp calculation variables (same as MID360) ***/
+  double omega_l = 0.361 * SCAN_RATE[lidar_num];  // scan angular velocity
+  std::vector<bool> is_first(N_SCANS[lidar_num], true);
+  std::vector<double> yaw_fp(N_SCANS[lidar_num], 0.0);    // yaw of first scan point
+  std::vector<float> yaw_last(N_SCANS[lidar_num], 0.0);   // yaw of last scan point
+  std::vector<float> time_last(N_SCANS[lidar_num], 0.0);  // last offset time
+  /*****************************************************************/
 
   if (feature_enabled)
   {
@@ -654,12 +664,43 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       added_pt.normal_x = 0;
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
-      added_pt.curvature = 0.;
+
+      int ring = pl_orig.points[i].ring;
+
+      // Calculate timestamp based on yaw angle (same as MID360)
+      double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
+
+      if (is_first[ring])
+      {
+        yaw_fp[ring] = yaw_angle;
+        is_first[ring] = false;
+        added_pt.curvature = 0.0;
+        yaw_last[ring] = yaw_angle;
+        time_last[ring] = 0.0;
+      }
+      else
+      {
+        // Compute offset time
+        if (yaw_angle <= yaw_fp[ring])
+        {
+          added_pt.curvature = (yaw_fp[ring] - yaw_angle) / omega_l;
+        }
+        else
+        {
+          added_pt.curvature = (yaw_fp[ring] - yaw_angle + 360.0) / omega_l;
+        }
+
+        if (added_pt.curvature < time_last[ring])
+          added_pt.curvature += 360.0 / omega_l;
+
+        yaw_last[ring] = yaw_angle;
+        time_last[ring] = added_pt.curvature;
+      }
 
       // Use per-lidar N_SCANS
-      if (pl_orig.points[i].ring < N_SCANS[lidar_num])
+      if (ring < N_SCANS[lidar_num])
       {
-        pl_buff[pl_orig.points[i].ring].push_back(added_pt);
+        pl_buff[ring].push_back(added_pt);
       }
     }
 
@@ -685,7 +726,7 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
   }
   else
   {
-    // "Simple" mode: just filter, copy, and optionally downsample
+    // "Simple" mode with timestamp calculation
     for (int i = 0; i < pl_orig.points.size(); i++)
     {
       if (i % point_filter_num[lidar_num] != 0)
@@ -705,7 +746,45 @@ void Preprocess::gazebo_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
       added_pt.normal_x = 0;
       added_pt.normal_y = 0;
       added_pt.normal_z = 0;
-      added_pt.curvature = 0.;
+
+      int ring = pl_orig.points[i].ring;
+
+      // Calculate timestamp based on yaw angle (same as MID360)
+      double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
+
+      if (ring < N_SCANS[lidar_num])
+      {
+        if (is_first[ring])
+        {
+          yaw_fp[ring] = yaw_angle;
+          is_first[ring] = false;
+          added_pt.curvature = 0.0;
+          yaw_last[ring] = yaw_angle;
+          time_last[ring] = 0.0;
+        }
+        else
+        {
+          // Compute offset time
+          if (yaw_angle <= yaw_fp[ring])
+          {
+            added_pt.curvature = (yaw_fp[ring] - yaw_angle) / omega_l;
+          }
+          else
+          {
+            added_pt.curvature = (yaw_fp[ring] - yaw_angle + 360.0) / omega_l;
+          }
+
+          if (added_pt.curvature < time_last[ring])
+            added_pt.curvature += 360.0 / omega_l;
+
+          yaw_last[ring] = yaw_angle;
+          time_last[ring] = added_pt.curvature;
+        }
+      }
+      else
+      {
+        added_pt.curvature = 0.;
+      }
 
       pl_surf.points.push_back(added_pt);
     }
