@@ -45,6 +45,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <Eigen/Core>
 #include "IMU_Processing.hpp"
+#include "adaptive_fusion.hpp"  // Multi-LiDAR adaptive fusion
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -88,6 +89,45 @@ deque<double> time_buffer;               // <-- shared, will mark lidar source p
 deque<PointCloudXYZI::Ptr> lidar_buffer; // <-- shared, will mark lidar source per-scan
 deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
 int current_lidar_num = 1;
+
+// Adaptive fusion mode parameters
+int update_mode = 2;  // 0=Bundle, 1=Async, 2=Adaptive
+int adaptive_fov_threshold = 5000;
+double adaptive_feature_density = 0.002;
+double adaptive_hysteresis_ratio = 1.2;
+int adaptive_stability_frames = 3;
+bool adaptive_debug_output = false;
+
+// Adaptive fusion manager instance
+std::unique_ptr<AdaptiveFusionManager> adaptive_fusion_manager;
+
+// Adaptive fusion metrics
+struct AdaptiveFusionMetrics {
+    int total_scans_processed = 0;
+    int async_mode_count = 0;
+    int bundle_mode_count = 0;
+    int mode_switches = 0;
+    UpdateMode last_mode = UpdateMode::ASYNC;
+    double avg_points_per_scan = 0.0;
+    double avg_scan_volume = 0.0;
+} adaptive_metrics;
+
+/**
+ * @brief Calculate scan volume based on detection range and FOV
+ * @param max_range Maximum detection range in meters
+ * @param fov_deg Field of view in degrees
+ * @return Estimated scan volume in cubic meters
+ */
+inline double calculateScanVolume(double max_range, double fov_deg) {
+    // Approximate volume as a cone frustum
+    // V = (1/3) * π * h * (R² + R*r + r²)
+    // For LiDAR: approximate as spherical cap
+    double fov_rad = fov_deg * M_PI / 180.0;
+    double height = max_range * (1.0 - cos(fov_rad / 2.0));
+    double radius = max_range * sin(fov_rad / 2.0);
+    // Simplified: use cylinder approximation for efficiency
+    return M_PI * radius * radius * max_range / 3.0;
+}
 /****************************************/
 
 Eigen::Matrix4f tf_m360_child = Eigen::Matrix4f::Identity();
@@ -503,6 +543,120 @@ bool sync_packages(MeasureGroup &meas)
     lidar_buffer.pop_front();
     time_buffer.pop_front();
     lidar_pushed = false;
+    return true;
+}
+
+/**
+ * @brief Bundle mode: Merge scans from both LiDARs before processing
+ * @param meas Output measurement group with merged point cloud
+ * @return true if bundle successful, false if not enough data
+ */
+bool sync_packages_bundle(MeasureGroup &meas)
+{
+    if (lidar_buffer.size() < 2 || imu_buffer.empty()) {
+        return false;  // Need at least 2 scans (one from each LiDAR)
+    }
+
+    // Get both scans from buffer
+    PointCloudXYZI::Ptr scan1(new PointCloudXYZI());
+    PointCloudXYZI::Ptr scan2(new PointCloudXYZI());
+    double time1, time2;
+    bool has_lidar1 = false, has_lidar2 = false;
+
+    // Search buffer for one scan from each LiDAR
+    auto lidar_it = lidar_buffer.begin();
+    auto time_it = time_buffer.begin();
+
+    for (; lidar_it != lidar_buffer.end() && (!has_lidar1 || !has_lidar2); ++lidar_it, ++time_it)
+    {
+        if ((*lidar_it)->header.seq == 0 && !has_lidar1) {
+            // LiDAR 1
+            *scan1 = **lidar_it;
+            time1 = *time_it;
+            has_lidar1 = true;
+        }
+        else if ((*lidar_it)->header.seq == 1 && !has_lidar2) {
+            // LiDAR 2
+            *scan2 = **lidar_it;
+            time2 = *time_it;
+            has_lidar2 = true;
+        }
+    }
+
+    if (!has_lidar1 || !has_lidar2) {
+        return false;  // Don't have scans from both LiDARs yet
+    }
+
+    // Transform LiDAR2 to LiDAR1 frame
+    pcl::transformPointCloud(*scan2, *scan2, LiDAR2_wrt_LiDAR1);
+
+    // Merge point clouds
+    meas.lidar = PointCloudXYZI::Ptr(new PointCloudXYZI());
+    *meas.lidar = *scan1;
+    *meas.lidar += *scan2;
+
+    // Use earlier timestamp as begin time
+    meas.lidar_beg_time = std::min(time1, time2);
+
+    // Calculate end time from merged cloud
+    if (meas.lidar->points.size() <= 1)
+    {
+        lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
+    }
+    else if (meas.lidar->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime)
+    {
+        lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
+    }
+    else
+    {
+        scan_num++;
+        lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
+        lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
+    }
+
+    meas.lidar_end_time = lidar_end_time;
+
+    if (last_timestamp_imu < lidar_end_time)
+    {
+        return false;
+    }
+
+    /*** push imu data ***/
+    double imu_time = get_time_sec(imu_buffer.front()->header.stamp);
+    meas.imu.clear();
+    while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
+    {
+        imu_time = get_time_sec(imu_buffer.front()->header.stamp);
+        if(imu_time > lidar_end_time) break;
+        meas.imu.push_back(imu_buffer.front());
+        imu_buffer.pop_front();
+    }
+
+    // Remove processed scans from buffer
+    lidar_it = lidar_buffer.begin();
+    time_it = time_buffer.begin();
+    int removed_count = 0;
+
+    while (lidar_it != lidar_buffer.end() && removed_count < 2)
+    {
+        if ((*lidar_it)->header.seq == 0 || (*lidar_it)->header.seq == 1) {
+            lidar_it = lidar_buffer.erase(lidar_it);
+            time_it = time_buffer.erase(time_it);
+            removed_count++;
+        } else {
+            ++lidar_it;
+            ++time_it;
+        }
+    }
+
+    current_lidar_num = 0;  // Indicate bundle mode (both sensors)
+
+    if (adaptive_debug_output) {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                   "[BUNDLE] Merged scans: L1=%zu pts, L2=%zu pts, Total=%zu pts",
+                   scan1->points.size(), scan2->points.size(), meas.lidar->points.size());
+    }
+
     return true;
 }
 
@@ -936,6 +1090,14 @@ public:
         this->declare_parameter<bool>("traj_save.traj_save_en", false);
         this->declare_parameter<string>("traj_save.traj_file_path", "");
 
+        // Adaptive fusion mode parameters
+        this->declare_parameter<int>("update_mode", 2);
+        this->declare_parameter<int>("adaptive_fov_threshold", 5000);
+        this->declare_parameter<double>("adaptive_feature_density", 0.002);
+        this->declare_parameter<double>("adaptive_hysteresis_ratio", 1.2);
+        this->declare_parameter<int>("adaptive_stability_frames", 3);
+        this->declare_parameter<bool>("adaptive_debug_output", false);
+
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.scan_publish_en", scan_pub_en, true);
         this->get_parameter_or<bool>("publish.dense_publish_en", dense_pub_en, true);
@@ -986,6 +1148,29 @@ public:
         this->get_parameter_or<bool>("traj_save.traj_save_en", traj_save_en, false);
         this->get_parameter_or<string>("traj_save.traj_file_path", traj_file_path, "");
 
+        // Read adaptive fusion mode parameters
+        this->get_parameter_or<int>("update_mode", update_mode, 2);
+        this->get_parameter_or<int>("adaptive_fov_threshold", adaptive_fov_threshold, 5000);
+        this->get_parameter_or<double>("adaptive_feature_density", adaptive_feature_density, 0.002);
+        this->get_parameter_or<double>("adaptive_hysteresis_ratio", adaptive_hysteresis_ratio, 1.2);
+        this->get_parameter_or<int>("adaptive_stability_frames", adaptive_stability_frames, 3);
+        this->get_parameter_or<bool>("adaptive_debug_output", adaptive_debug_output, false);
+
+        // Initialize AdaptiveFusionManager
+        AdaptiveFusionManager::Config fusion_config;
+        fusion_config.update_mode = static_cast<UpdateMode>(update_mode);
+        fusion_config.fov_threshold = adaptive_fov_threshold;
+        fusion_config.feature_density_threshold = adaptive_feature_density;
+        fusion_config.hysteresis_ratio = adaptive_hysteresis_ratio;
+        fusion_config.stability_frames = adaptive_stability_frames;
+        fusion_config.enable_debug_output = adaptive_debug_output;
+
+        adaptive_fusion_manager = std::make_unique<AdaptiveFusionManager>(fusion_config);
+
+        RCLCPP_INFO(this->get_logger(), "Adaptive Fusion Mode: %s (mode=%d)",
+                    updateModeToString(fusion_config.update_mode), update_mode);
+        RCLCPP_INFO(this->get_logger(), "  FOV Threshold: %d points", adaptive_fov_threshold);
+        RCLCPP_INFO(this->get_logger(), "  Feature Density Threshold: %.4f pts/m³", adaptive_feature_density);
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 2: %d", p_pre->lidar_type[LIDAR2]);
 
@@ -1124,8 +1309,87 @@ private:
     //*** main functions ***//
     void timer_callback()
     {
-        if(sync_packages(Measures))
+        bool sync_success = false;
+
+        // ============================================================================
+        // ADAPTIVE MULTI-LIDAR FUSION: Determine strategy and sync packages
+        // ============================================================================
+        if (multi_lidar && adaptive_fusion_manager)
         {
+            UpdateMode current_mode = adaptive_fusion_manager->getConfiguredMode();
+
+            // For ADAPTIVE mode, determine strategy based on buffer contents
+            if (current_mode == UpdateMode::ADAPTIVE && !lidar_buffer.empty())
+            {
+                // Estimate point count and volume for strategy determination
+                int estimated_points = lidar_buffer.front()->points.size();
+                double scan_volume = calculateScanVolume(DET_RANGE, fov_deg);
+
+                // Determine optimal strategy
+                UpdateMode strategy = adaptive_fusion_manager->determineStrategy(
+                    estimated_points,
+                    scan_volume
+                );
+
+                // Track mode switches for metrics
+                if (strategy != adaptive_metrics.last_mode) {
+                    adaptive_metrics.mode_switches++;
+                    adaptive_metrics.last_mode = strategy;
+                }
+
+                // Execute strategy
+                if (strategy == UpdateMode::BUNDLE) {
+                    sync_success = sync_packages_bundle(Measures);
+                    if (sync_success) {
+                        adaptive_metrics.bundle_mode_count++;
+                    }
+                } else {
+                    sync_success = sync_packages(Measures);
+                    if (sync_success) {
+                        adaptive_metrics.async_mode_count++;
+                    }
+                }
+            }
+            // For fixed BUNDLE mode
+            else if (current_mode == UpdateMode::BUNDLE)
+            {
+                sync_success = sync_packages_bundle(Measures);
+                if (sync_success) {
+                    adaptive_metrics.bundle_mode_count++;
+                }
+            }
+            // For fixed ASYNC mode
+            else if (current_mode == UpdateMode::ASYNC)
+            {
+                sync_success = sync_packages(Measures);
+                if (sync_success) {
+                    adaptive_metrics.async_mode_count++;
+                }
+            }
+        }
+        else
+        {
+            // Single LiDAR mode (original behavior)
+            sync_success = sync_packages(Measures);
+        }
+
+        // ============================================================================
+        // PROCESS SYNCHRONIZED PACKAGES
+        // ============================================================================
+        if(sync_success)
+        {
+            // Update metrics
+            if (multi_lidar && adaptive_fusion_manager) {
+                adaptive_metrics.total_scans_processed++;
+                int point_count = Measures.lidar->points.size();
+                adaptive_metrics.avg_points_per_scan =
+                    (adaptive_metrics.avg_points_per_scan * (adaptive_metrics.total_scans_processed - 1) + point_count)
+                    / adaptive_metrics.total_scans_processed;
+                adaptive_metrics.avg_scan_volume =
+                    (adaptive_metrics.avg_scan_volume * (adaptive_metrics.total_scans_processed - 1) +
+                     calculateScanVolume(DET_RANGE, fov_deg)) / adaptive_metrics.total_scans_processed;
+            }
+
             if (flg_first_scan)
             {
                 first_lidar_time = Measures.lidar_beg_time;
@@ -1263,6 +1527,31 @@ private:
                 s_plot10[time_log_counter] = add_point_size;
                 time_log_counter ++;
                 printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
+
+                // Print adaptive fusion metrics every 100 frames
+                if (multi_lidar && adaptive_fusion_manager && (frame_num % 100 == 0)) {
+                    double async_ratio = adaptive_metrics.total_scans_processed > 0 ?
+                        (100.0 * adaptive_metrics.async_mode_count / adaptive_metrics.total_scans_processed) : 0.0;
+                    double bundle_ratio = adaptive_metrics.total_scans_processed > 0 ?
+                        (100.0 * adaptive_metrics.bundle_mode_count / adaptive_metrics.total_scans_processed) : 0.0;
+
+                    RCLCPP_INFO(this->get_logger(),
+                               "\n========== ADAPTIVE FUSION METRICS ==========\n"
+                               "  Mode: %s | Current: %s\n"
+                               "  Total scans: %d | Mode switches: %d\n"
+                               "  ASYNC: %d (%.1f%%) | BUNDLE: %d (%.1f%%)\n"
+                               "  Avg points/scan: %.0f | Avg volume: %.2f m³\n"
+                               "=============================================",
+                               updateModeToString(adaptive_fusion_manager->getConfiguredMode()),
+                               updateModeToString(adaptive_fusion_manager->getCurrentStrategy()),
+                               adaptive_metrics.total_scans_processed,
+                               adaptive_metrics.mode_switches,
+                               adaptive_metrics.async_mode_count, async_ratio,
+                               adaptive_metrics.bundle_mode_count, bundle_ratio,
+                               adaptive_metrics.avg_points_per_scan,
+                               adaptive_metrics.avg_scan_volume);
+                }
+
                 ext_euler = SO3ToEuler(state_point.offset_R_L_I);
                 fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
                 <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;

@@ -1,0 +1,349 @@
+###############################################################################
+# FAST-LIO Multi-Sensor Configuration
+# Target: Dual Livox MID-360 for Underground Mine Navigation
+# Hardware: NVIDIA Jetson ORIN + 2x MID-360
+# ROS2: Humble/Iron
+# Update Strategy: Adaptive (Bundle + Async switching)
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # MULTI-LIDAR CONFIGURATION
+    # ==========================================================================
+    multi_lidar: true                    # CRITICAL: Enable multi-LiDAR fusion mode
+                                         # When true, system subscribes to multiple LiDAR topics
+                                         # and fuses data using adaptive strategy
+
+    # ==========================================================================
+    # ADAPTIVE UPDATE STRATEGY PARAMETERS
+    # ==========================================================================
+    # Three update modes:
+    #   0 = BUNDLE:   Merge both LiDAR scans, then update filter once
+    #                 Pros: Max features per update, robust in sparse areas
+    #                 Cons: Lower update rate (10Hz), higher latency
+    #
+    #   1 = ASYNC:    Update filter separately for each LiDAR scan
+    #                 Pros: Higher update rate (20Hz), lower drift
+    #                 Cons: Risk of insufficient FOV per update
+    #
+    #   2 = ADAPTIVE: Dynamically switch between BUNDLE and ASYNC based on
+    #                 feature density and environment characteristics
+    #                 Pros: Best of both approaches, environment-aware
+    #                 Cons: Slightly higher computational complexity
+    # ==========================================================================
+    update_mode: 2                       # 0=Bundle, 1=Async, 2=Adaptive (RECOMMENDED for mines)
+
+    # Adaptive mode thresholds
+    adaptive_fov_threshold: 5000         # Switch to BUNDLE if total points in FOV < this value
+                                         # Lower values = more aggressive async
+                                         # Higher values = more conservative (more bundle)
+                                         # 5000 is good for mine tunnels (sparse features)
+
+    adaptive_feature_density: 0.002      # Min feature density (points/m³) to use ASYNC
+                                         # If density falls below, switch to BUNDLE
+                                         # Typical mine: 0.001-0.005
+
+    adaptive_hysteresis_ratio: 1.2       # Hysteresis multiplier to prevent mode oscillation
+                                         # Higher value = more stable but slower adaptation
+                                         # Range: 1.1-1.5
+
+    adaptive_stability_frames: 3         # Number of consecutive frames before mode switch
+                                         # Prevents rapid oscillation between modes
+                                         # Higher = more stable, lower = more responsive
+                                         # Range: 2-10
+
+    adaptive_debug_output: false         # Enable verbose logging of mode switches
+                                         # Set to true for tuning and debugging
+                                         # Warning: May reduce performance
+
+    # ==========================================================================
+    # FAST-LIO CORE PARAMETERS
+    # ==========================================================================
+    feature_extract_enable: false        # Use all points (no feature extraction)
+                                         # MID-360 provides clean data, no need for extraction
+
+    point_filter_num: 2                  # Downsampling: keep every Nth point
+                                         # 2 = keep every 2nd point (50% reduction)
+                                         # Lower value = more points = better for sparse mines
+                                         # Livox recommended: 2-3
+
+    max_iteration: 4                     # Max iterations for ICP optimization
+                                         # Higher = more accurate but slower
+                                         # 3-4 is good balance for real-time
+                                         # Increase to 5 if accuracy critical
+
+    filter_size_surf: 0.3                # Voxel size (m) for surface downsampling
+                                         # Smaller = finer details, more computation
+                                         # 0.3-0.5 good for mines (need detail for walls)
+
+    filter_size_map: 0.4                 # Voxel size (m) for map downsampling
+                                         # Smaller = denser map, more memory
+                                         # 0.4-0.5 good balance
+
+    cube_side_length: 200.0              # Local map cube size (meters)
+                                         # Smaller = less memory, faster updates
+                                         # 200m good for mines (not infinite like outdoor)
+
+    runtime_pos_log_enable: false        # Log position during runtime (debugging)
+
+    map_file_path: "/home/jetson/ros2_ws/src/fast_lio_ros2/PCD/mine_map.pcd"
+
+    # ==========================================================================
+    # COMMON SETTINGS
+    # ==========================================================================
+    common:
+      # --- Topic Configuration ---
+      # CRITICAL: These must match your livox_ros_driver2 output topics
+      # Set multi_topic: 1 in livox_params.yaml to get separate topics
+      lid_topic:  "/livox/lidar_192_168_1_10"   # Front MID-360 (IP: 192.168.1.10)
+      lid_topic2: "/livox/lidar_192_168_1_18"   # Rear MID-360 (IP: 192.168.1.18)
+
+      # IMU topic (shared from primary sensor or external IMU)
+      imu_topic:  "/livox/imu_192_168_1_10"     # Primary MID-360 IMU
+
+      # --- Time Synchronization ---
+      time_sync_en: false                # Use hardware timestamps from sensors
+                                         # Only enable if timestamps are unreliable
+                                         # MID-360 has good built-in timestamps
+
+      time_offset_lidar_to_imu: 0.0      # Time offset (seconds) between LiDAR and IMU
+                                         # For MID-360 built-in IMU: typically 0.0
+                                         # Calibrate with LI-Init if using external IMU
+
+    # ==========================================================================
+    # PREPROCESSING PARAMETERS
+    # ==========================================================================
+    preprocess:
+      # --- PRIMARY LIDAR (LiDAR 1: Front-facing) ---
+      lidar_type: 4                      # 1=AVIA, 2=Velodyne, 3=Ouster, 4=MID360, 5=Gazebo
+      scan_line: 4                       # MID-360 has 4 scan lines
+      blind: 0.3                         # Ignore points closer than 0.3m
+                                         # Prevents ground clutter and dust near sensor
+                                         # Increase to 0.5m if heavy dust
+      scan_rate: 10                      # LiDAR scan rate (Hz)
+                                         # MID-360 supports 10Hz (standard)
+      timestamp_unit: 3                  # 0=sec, 1=ms, 2=μs, 3=ns
+                                         # MID-360 uses nanoseconds
+      point_filter_num: 2                # Downsample: keep 1 in every 2 points
+
+      # --- SECONDARY LIDAR (LiDAR 2: Rear-facing) ---
+      lidar_type2: 4                     # MID-360 (same as primary)
+      scan_line2: 4
+      blind2: 0.3                        # Match primary sensor
+      scan_rate2: 10                     # Must match primary for synchronization
+      timestamp_unit2: 3                 # Nanosecond timestamps
+      point_filter_num2: 2               # Match primary downsampling
+
+    # ==========================================================================
+    # MAPPING & SENSOR FUSION PARAMETERS
+    # ==========================================================================
+    mapping:
+      # --- IMU Noise Model ---
+      # IMPORTANT: Underground mines have high vibration from rough terrain
+      # Increase covariance values to handle vibration noise
+      acc_cov: 0.5                       # Accelerometer noise covariance
+                                         # Default: 0.1, Mine: 0.5-1.0 (higher vibration)
+      gyr_cov: 0.5                       # Gyroscope noise covariance
+                                         # Default: 0.1, Mine: 0.5-1.0 (higher vibration)
+      b_acc_cov: 0.0001                  # Accelerometer bias covariance
+      b_gyr_cov: 0.0001                  # Gyroscope bias covariance
+
+      # --- Field of View & Detection Range ---
+      fov_degree: 360.0                  # Total FOV with both sensors
+                                         # Front (120°) + Rear (120°) ≈ 360° coverage
+      det_range: 50.0                    # Maximum detection range (meters)
+                                         # Typical mine visibility: 30-50m
+                                         # Reduce if dust limits effective range
+
+      # --- Extrinsic Calibration ---
+      # NOTE: Online estimation NOT supported for multi-LiDAR (yet)
+      # Use offline calibration or manual measurement
+      extrinsic_est_en: false            # Disable online extrinsic estimation
+
+      # ======================================================================
+      # LIDAR 1 EXTRINSICS (Primary/Left Sensor → Base Link)
+      # ======================================================================
+      # Calibration Source: Manual measurement
+      # IP: 192.168.1.10 (Left Sensor - L1)
+      # Distance from base_link: 11cm to the left (Y+)
+      #
+      # Livox Euler Angles:
+      #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
+      #   Pitch:  0.0°
+      #   Yaw:    0.0° (facing forward - same direction as drone)
+      #
+      # Physical mounting: Left side of base_link, facing forward, 11cm from center
+      # ======================================================================
+      extrinsic_T: [0.0, 0.11, 0.0]      # [x, y, z] meters
+      #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
+      #   y = +0.11m: 11cm to the left (positive Y axis)
+      #   z =  0.00m: Same height as base_link
+
+      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=0°)
+      # Standard Livox mounting orientation - facing forward
+      extrinsic_R: [ 1.00000,  0.00000,  0.00000,
+                     0.00000,  0.00000, -1.00000,
+                     0.00000,  1.00000,  0.00000]
+
+      # ======================================================================
+      # LIDAR 2 EXTRINSICS (Secondary/Right Sensor → Base Link)
+      # ======================================================================
+      # Calibration Source: Manual measurement
+      # IP: 192.168.1.18 (Right Sensor - L2)
+      # Distance from base_link: 11cm to the right (Y-)
+      #
+      # Livox Euler Angles:
+      #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
+      #   Pitch:  0.0°
+      #   Yaw:  180.0° (facing backward - opposite direction to drone)
+      #
+      # Physical mounting: Right side of base_link, facing backward, 11cm from center
+      # Combined rotation: 90° roll + 180° yaw
+      # ======================================================================
+      extrinsic_T2: [0.0, -0.11, 0.0]    # [x, y, z] meters
+      #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
+      #   y = -0.11m: 11cm to the right (negative Y axis)
+      #   z =  0.00m: Same height as base_link
+
+      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=180°)
+      # Combined rotation: standard Livox roll + 180° yaw (facing backward)
+      extrinsic_R2: [-1.00000,  0.00000,  0.00000,
+                      0.00000,  0.00000,  1.00000,
+                      0.00000,  1.00000,  0.00000]
+
+      # If you need different orientations, use these rotation matrices:
+      #
+      # 90° Yaw (Left-facing):
+      #   extrinsic_R2: [0., -1., 0.,
+      #                  1.,  0., 0.,
+      #                  0.,  0., 1.]
+      #
+      # -90° Yaw (Right-facing):
+      #   extrinsic_R2: [ 0., 1., 0.,
+      #                  -1., 0., 0.,
+      #                   0., 0., 1.]
+      #
+      # 90° Roll (Tilted sideways):
+      #   extrinsic_R2: [1.,  0.,  0.,
+      #                  0.,  0., -1.,
+      #                  0.,  1.,  0.]
+      #
+      # Combined rotations: multiply rotation matrices in order (ZYX convention)
+
+      # ======================================================================
+      # RELATIVE TRANSFORM: LiDAR 2 w.r.t. LiDAR 1
+      # ======================================================================
+      # This is computed from the above transformations: T_L2_wrt_L1 = T2 - T1
+      # Used internally for some fusion algorithms
+      # Translation: [0.0, -0.11, 0.0] - [0.0, 0.11, 0.0] = [0.0, -0.22, 0.0]
+      # Total baseline between sensors: 22cm lateral separation (11cm left + 11cm right)
+      # ======================================================================
+      extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]  # LiDAR 2 is 22cm to the right of LiDAR 1
+
+      # Relative rotation: R_L2_wrt_L1 = R2 * R1^T
+      # This represents how LiDAR 2 is rotated relative to LiDAR 1
+      # L2 faces backward (180° yaw) while L1 faces forward (0° yaw)
+      extrinsic_R_L2_wrt_L1: [-1.00000,  0.00000,  0.00000,
+                               0.00000, -1.00000,  0.00000,
+                               0.00000,  0.00000,  1.00000]
+
+    # ==========================================================================
+    # PUBLISHING OPTIONS
+    # ==========================================================================
+    publish:
+      path_en: true                      # Publish odometry path (/path topic)
+                                         # Essential for visualization and monitoring
+
+      effect_map_en: false               # Publish effective map points
+                                         # Disable to reduce computational load
+
+      map_en: true                       # Publish global map (/cloud_registered)
+                                         # Important for map visualization
+
+      scan_publish_en: true              # Publish current scan (/cloud_registered_body)
+                                         # Useful for debugging sensor alignment
+
+      dense_publish_en: false            # Publish dense point cloud
+                                         # Disable to save bandwidth/CPU
+
+      scan_bodyframe_pub_en: true        # Publish scan in body frame
+                                         # Helps verify extrinsic calibration
+
+    # ==========================================================================
+    # PCD MAP SAVING
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: true                  # Save final map to PCD file
+                                         # Important for mine surveying/mapping
+
+      pcd_file_name: "mine_dual_mid360.pcd"  # Output filename
+
+      interval: -1                       # Save interval (# of LiDAR frames)
+                                         # -1: Save all frames at end (single file)
+                                         # >0: Save every N frames (multiple files)
+                                         # For mines: -1 recommended (single complete map)
+
+###############################################################################
+# CALIBRATION INSTRUCTIONS
+###############################################################################
+#
+# To measure extrinsic parameters on your platform:
+#
+# 1. TRANSLATION MEASUREMENT:
+#    - Mark base_link position (typically IMU center or vehicle center)
+#    - Measure XYZ distance from base_link to each LiDAR sensor center
+#    - Use metric tape measure or CAD model
+#    - Record as [x, y, z] in meters with proper signs (±)
+#
+# 2. ROTATION MEASUREMENT:
+#    - Determine sensor orientation relative to base frame
+#    - Front-facing = Identity matrix [1,0,0, 0,1,0, 0,0,1]
+#    - Rear-facing (180° yaw) = [-1,0,0, 0,-1,0, 0,0,1]
+#    - Use rotation matrix calculator for complex angles
+#
+# 3. OFFLINE CALIBRATION (Advanced):
+#    - Collect rosbag with both sensors in static environment
+#    - Use GICP-based calibration (TIERS tools or custom)
+#    - Extract rotation + translation matrices
+#    - Update extrinsic_T and extrinsic_R parameters
+#
+# 4. VALIDATION:
+#    - Visualize both sensor clouds in RViz
+#    - Check alignment of overlapping regions
+#    - Verify no ghosting or misalignment
+#    - Adjust parameters if needed
+#
+###############################################################################
+
+###############################################################################
+# TUNING GUIDE FOR UNDERGROUND MINES
+###############################################################################
+#
+# FEATURE-SPARSE TUNNELS:
+#   - Increase point_filter_num: 2 → 1 (keep more points)
+#   - Decrease filter_size_surf: 0.3 → 0.2 (finer detail)
+#   - Increase adaptive_fov_threshold: 5000 → 8000 (more bundle mode)
+#
+# HIGH VIBRATION:
+#   - Increase acc_cov: 0.5 → 1.0
+#   - Increase gyr_cov: 0.5 → 1.0
+#   - Increase max_iteration: 4 → 5
+#
+# DUSTY CONDITIONS:
+#   - Increase blind: 0.3 → 0.5 (ignore dust near sensor)
+#   - Reduce det_range: 50 → 30 (dust limits visibility)
+#   - Monitor point cloud quality metrics
+#
+# FAST MOTION:
+#   - Set update_mode: 1 (pure async for low latency)
+#   - Increase scan_rate: 10 → 20 (if sensors support)
+#   - Reduce max_iteration: 4 → 3 (faster convergence)
+#
+# COMPUTATIONAL LIMITS (Jetson ORIN Nano):
+#   - Increase point_filter_num: 2 → 3 (more downsampling)
+#   - Increase filter_size_surf: 0.3 → 0.5
+#   - Disable dense_publish_en: false
+#   - Reduce cube_side_length: 200 → 100
+#
+###############################################################################
