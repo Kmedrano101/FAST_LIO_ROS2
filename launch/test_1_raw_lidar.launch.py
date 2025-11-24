@@ -41,16 +41,16 @@ def generate_launch_description():
     # Find package
     fast_lio_share = FindPackageShare('fast_lio_ros2')
 
-    # Static TF: Provide identity transform for livox_frame
-    # This is just for RViz visualization reference
-    tf_world_to_livox = Node(
+    # Static TF: Connect base_link to frame_default for RViz visualization
+    # This allows RViz (fixed frame: base_link) to display lidars (frame_id: frame_default)
+    tf_base_to_frame_default = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='world_to_livox_frame',
+        name='base_to_frame_default',
         arguments=[
             '0', '0', '0',  # x, y, z
             '0', '0', '0',  # roll, pitch, yaw
-            'world', 'livox_frame'
+            'base_link', 'frame_default'
         ],
         output='screen'
     )
@@ -72,6 +72,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_rviz_arg,
-        tf_world_to_livox,
+        tf_base_to_frame_default,
         rviz_node,
     ])
