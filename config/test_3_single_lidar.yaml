@@ -65,8 +65,8 @@
       # Extrinsic Calibration
       extrinsic_est_en: false
 
-      # LiDAR → IMU: Identity (using built-in IMU)
-      extrinsic_T: [0.0, 0.0, 0.0]
+      # LiDAR → IMU: Calibrated values from mid360.yaml
+      extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
       extrinsic_R: [1.0, 0.0, 0.0,
                     0.0, 1.0, 0.0,
                     0.0, 0.0, 1.0]

@@ -1,38 +1,30 @@
 #!/usr/bin/env python3
 """
-TEST 4: Dual LiDAR Static Fusion Test
-======================================
+TEST 4: Dual LiDAR Static Fusion Core (Jetson)
+===============================================
 
-Purpose: Test dual LiDAR fusion without motion (easiest case)
+Purpose: Run core dual LiDAR fusion on Jetson without visualization
 
 This launch file starts:
 - Livox driver with both LiDARs
 - FAST-LIO with dual LiDAR in BUNDLE mode
-- RViz for visualization
 
 Usage:
-    ros2 launch fast_lio_ros2 test_4_dual_static.launch.py
+    ros2 launch fast_lio_ros2 test_4_dual_static_core.launch.py
 
+For visualization, run test_4_dual_static_viz.launch.py on desktop machine
 Expected: Both LiDAR scans fused cleanly, thin walls, no ghosting
 """
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.actions import IncludeLaunchDescription
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.conditions import IfCondition
 
 
 def generate_launch_description():
-    # Arguments
-    use_rviz_arg = DeclareLaunchArgument(
-        'use_rviz',
-        default_value='true',
-        description='Launch RViz2 for visualization'
-    )
-
     # Find packages
     livox_share = FindPackageShare('livox_ros_driver2')
     fast_lio_share = FindPackageShare('fast_lio_ros2')
@@ -58,24 +50,7 @@ def generate_launch_description():
         parameters=[config_file],
     )
 
-    # RViz config
-    rviz_config = PathJoinSubstitution([
-        fast_lio_share, 'rviz', 'fastlio.rviz'
-    ])
-
-    # RViz node
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config],
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('use_rviz'))
-    )
-
     return LaunchDescription([
-        use_rviz_arg,
         livox_launch,
         fast_lio_node,
-        rviz_node,
     ])
