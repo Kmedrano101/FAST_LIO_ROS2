@@ -32,7 +32,7 @@
     #                 Pros: Best of both approaches, environment-aware
     #                 Cons: Slightly higher computational complexity
     # ==========================================================================
-    update_mode: 2                       # 0=Bundle, 1=Async, 2=Adaptive (RECOMMENDED for mines)
+    update_mode: 2                       # 0=Bundle, 1=Async, 2=Adaptive
 
     # Adaptive mode thresholds
     adaptive_fov_threshold: 5000         # Switch to BUNDLE if total points in FOV < this value
@@ -164,52 +164,51 @@
       # ======================================================================
       # LIDAR 1 EXTRINSICS (Primary/Left Sensor → Base Link)
       # ======================================================================
-      # Calibration Source: Manual measurement
+      # Calibration Source: livox_ros_driver2/config/multiple_netconfigs.json
       # IP: 192.168.1.10 (Left Sensor - L1)
       # Distance from base_link: 11cm to the left (Y+)
       #
       # Livox Euler Angles:
       #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
       #   Pitch:  0.0°
-      #   Yaw:    0.0° (facing forward - same direction as drone)
+      #   Yaw:  180.0° (facing BACKWARD - opposite direction to base_link forward)
       #
-      # Physical mounting: Left side of base_link, facing forward, 11cm from center
+      # Physical mounting: Left side of base_link, facing BACKWARD, 11cm from center
       # ======================================================================
       extrinsic_T: [0.0, 0.11, 0.0]      # [x, y, z] meters
       #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
       #   y = +0.11m: 11cm to the left (positive Y axis)
       #   z =  0.00m: Same height as base_link
 
-      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=0°)
-      # Standard Livox mounting orientation - facing forward
-      extrinsic_R: [ 1.00000,  0.00000,  0.00000,
-                     0.00000,  0.00000, -1.00000,
+      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=180°)
+      # Combined rotation: standard Livox roll + 180° yaw (facing backward)
+      extrinsic_R: [-1.00000, -0.00000,  0.00000,
+                     0.00000, -0.00000,  1.00000,
                      0.00000,  1.00000,  0.00000]
 
       # ======================================================================
       # LIDAR 2 EXTRINSICS (Secondary/Right Sensor → Base Link)
       # ======================================================================
-      # Calibration Source: Manual measurement
+      # Calibration Source: livox_ros_driver2/config/multiple_netconfigs.json
       # IP: 192.168.1.18 (Right Sensor - L2)
       # Distance from base_link: 11cm to the right (Y-)
       #
       # Livox Euler Angles:
       #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
       #   Pitch:  0.0°
-      #   Yaw:  180.0° (facing backward - opposite direction to drone)
+      #   Yaw:    0.0° (facing FORWARD - same direction as base_link forward)
       #
-      # Physical mounting: Right side of base_link, facing backward, 11cm from center
-      # Combined rotation: 90° roll + 180° yaw
+      # Physical mounting: Right side of base_link, facing FORWARD, 11cm from center
       # ======================================================================
       extrinsic_T2: [0.0, -0.11, 0.0]    # [x, y, z] meters
       #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
       #   y = -0.11m: 11cm to the right (negative Y axis)
       #   z =  0.00m: Same height as base_link
 
-      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=180°)
-      # Combined rotation: standard Livox roll + 180° yaw (facing backward)
-      extrinsic_R2: [-1.00000,  0.00000,  0.00000,
-                      0.00000,  0.00000,  1.00000,
+      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=0°)
+      # Standard Livox mounting orientation - facing forward
+      extrinsic_R2: [ 1.00000,  0.00000,  0.00000,
+                      0.00000,  0.00000, -1.00000,
                       0.00000,  1.00000,  0.00000]
 
       # If you need different orientations, use these rotation matrices:
@@ -243,9 +242,10 @@
 
       # Relative rotation: R_L2_wrt_L1 = R2 * R1^T
       # This represents how LiDAR 2 is rotated relative to LiDAR 1
-      # L2 faces backward (180° yaw) while L1 faces forward (0° yaw)
+      # L1 faces backward (180° yaw) while L2 faces forward (0° yaw)
+      # Result: 180° yaw rotation between the two sensors
       extrinsic_R_L2_wrt_L1: [-1.00000,  0.00000,  0.00000,
-                               0.00000, -1.00000,  0.00000,
+                              -0.00000, -1.00000,  0.00000,
                                0.00000,  0.00000,  1.00000]
 
     # ==========================================================================
