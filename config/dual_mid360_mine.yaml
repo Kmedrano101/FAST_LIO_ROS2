@@ -162,90 +162,91 @@
       extrinsic_est_en: false            # Disable online extrinsic estimation
 
       # ======================================================================
-      # LIDAR 1 EXTRINSICS (Primary/Left Sensor → Base Link)
+      # REFERENCE FRAME: IMU BODY FRAME (LiDAR 1 Built-in IMU)
       # ======================================================================
-      # Calibration Source: livox_ros_driver2/config/multiple_netconfigs.json
-      # IP: 192.168.1.10 (Left Sensor - L1)
-      # Distance from base_link: 11cm to the left (Y+)
-      #
-      # Livox Euler Angles:
-      #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
-      #   Pitch:  0.0°
-      #   Yaw:  180.0° (facing BACKWARD - opposite direction to base_link forward)
-      #
-      # Physical mounting: Left side of base_link, facing BACKWARD, 11cm from center
+      # Following FAST_LIO_MULTI convention:
+      # - Primary reference frame is the IMU body frame
+      # - Using built-in IMU from LiDAR 1 (IP: 192.168.1.10)
+      # - IMU frame coincides with LiDAR 1 optical center
+      # - All extrinsics express sensor pose relative to this IMU frame
       # ======================================================================
-      extrinsic_T: [0.0, 0.11, 0.0]      # [x, y, z] meters
-      #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
-      #   y = +0.11m: 11cm to the left (positive Y axis)
-      #   z =  0.00m: Same height as base_link
-
-      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=180°)
-      # Combined rotation: standard Livox roll + 180° yaw (facing backward)
-      extrinsic_R: [-1.00000, -0.00000,  0.00000,
-                     0.00000, -0.00000,  1.00000,
-                     0.00000,  1.00000,  0.00000]
 
       # ======================================================================
-      # LIDAR 2 EXTRINSICS (Secondary/Right Sensor → Base Link)
+      # LIDAR 1 EXTRINSICS (Primary LiDAR → IMU Body Frame)
       # ======================================================================
-      # Calibration Source: livox_ros_driver2/config/multiple_netconfigs.json
-      # IP: 192.168.1.18 (Right Sensor - L2)
-      # Distance from base_link: 11cm to the right (Y-)
+      # IP: 192.168.1.10 (Left Sensor - Built-in IMU is the reference)
       #
-      # Livox Euler Angles:
-      #   Roll:  90.0° (sensor rotated 90° around X-axis - standard Livox mounting)
-      #   Pitch:  0.0°
-      #   Yaw:    0.0° (facing FORWARD - same direction as base_link forward)
+      # IMPORTANT: Since we're using LiDAR 1's built-in IMU as reference,
+      # LiDAR 1 and IMU are CO-LOCATED at the same position and orientation.
       #
-      # Physical mounting: Right side of base_link, facing FORWARD, 11cm from center
+      # Translation: IDENTITY (no offset, they're at the same location)
+      # Rotation: IDENTITY (no rotation, they share the same frame)
       # ======================================================================
-      extrinsic_T2: [0.0, -0.11, 0.0]    # [x, y, z] meters
-      #   x =  0.00m: Aligned with base_link center (no forward/backward offset)
-      #   y = -0.11m: 11cm to the right (negative Y axis)
-      #   z =  0.00m: Same height as base_link
+      extrinsic_T: [0.0, 0.0, 0.0]       # [x, y, z] meters - IDENTITY transform
+      #   LiDAR 1 optical center = IMU center (co-located)
 
-      # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=0°)
-      # Standard Livox mounting orientation - facing forward
-      extrinsic_R2: [ 1.00000,  0.00000,  0.00000,
-                      0.00000,  0.00000, -1.00000,
-                      0.00000,  1.00000,  0.00000]
-
-      # If you need different orientations, use these rotation matrices:
-      #
-      # 90° Yaw (Left-facing):
-      #   extrinsic_R2: [0., -1., 0.,
-      #                  1.,  0., 0.,
-      #                  0.,  0., 1.]
-      #
-      # -90° Yaw (Right-facing):
-      #   extrinsic_R2: [ 0., 1., 0.,
-      #                  -1., 0., 0.,
-      #                   0., 0., 1.]
-      #
-      # 90° Roll (Tilted sideways):
-      #   extrinsic_R2: [1.,  0.,  0.,
-      #                  0.,  0., -1.,
-      #                  0.,  1.,  0.]
-      #
-      # Combined rotations: multiply rotation matrices in order (ZYX convention)
+      # Rotation matrix: IDENTITY (LiDAR 1 frame = IMU frame)
+      extrinsic_R: [ 1.00000,  0.00000,  0.00000,
+                     0.00000,  1.00000,  0.00000,
+                     0.00000,  0.00000,  1.00000]
 
       # ======================================================================
-      # RELATIVE TRANSFORM: LiDAR 2 w.r.t. LiDAR 1
+      # LIDAR 2 EXTRINSICS (Secondary LiDAR → IMU Body Frame)
       # ======================================================================
-      # This is computed from the above transformations: T_L2_wrt_L1 = T2 - T1
-      # Used internally for some fusion algorithms
-      # Translation: [0.0, -0.11, 0.0] - [0.0, 0.11, 0.0] = [0.0, -0.22, 0.0]
-      # Total baseline between sensors: 22cm lateral separation (11cm left + 11cm right)
+      # IP: 192.168.1.18 (Right Sensor)
+      #
+      # Physical Configuration (from Livox driver config):
+      # - LiDAR 1: 11cm left of base_link (+Y), facing backward (Yaw=180°)
+      # - LiDAR 2: 11cm right of base_link (-Y), facing forward (Yaw=0°)
+      # - Base separation: 22cm lateral
+      #
+      # Since IMU frame = LiDAR 1 frame:
+      # - LiDAR 1 is at [0, +0.11, 0] relative to base_link, Yaw=180°
+      # - LiDAR 2 is at [0, -0.11, 0] relative to base_link, Yaw=0°
+      #
+      # Transform LiDAR 2 → IMU (LiDAR 1):
+      # Translation: T_L2_to_IMU = T_L2_to_base - T_L1_to_base
+      #            = [0, -0.11, 0] - [0, +0.11, 0] = [0, -0.22, 0]
+      # Rotation: L2 faces forward (0°), L1 faces backward (180°)
+      #           Relative rotation = 180° yaw difference
       # ======================================================================
-      extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]  # LiDAR 2 is 22cm to the right of LiDAR 1
+      extrinsic_T2: [0.0, -0.22, 0.0]    # [x, y, z] meters
+      #   x =  0.00m: Same longitudinal position as LiDAR 1
+      #   y = -0.22m: 22cm to the RIGHT of LiDAR 1 (lateral baseline)
+      #   z =  0.00m: Same height as LiDAR 1
 
-      # Relative rotation: R_L2_wrt_L1 = R2 * R1^T
-      # This represents how LiDAR 2 is rotated relative to LiDAR 1
-      # L1 faces backward (180° yaw) while L2 faces forward (0° yaw)
-      # Result: 180° yaw rotation between the two sensors
+      # Rotation: LiDAR 2 faces opposite direction to LiDAR 1
+      # LiDAR 1 (IMU): Yaw=180° (backward), Roll=90°
+      # LiDAR 2:       Yaw=0° (forward), Roll=90°
+      # Relative rotation: 180° yaw rotation
+      # R_L2_to_IMU = R_L2_to_base * R_base_to_L1 = R_L2_to_base * R_L1_to_base^T
+      #
+      # From Livox config:
+      #   R_L1 (Roll=90°, Yaw=180°) = [-1, 0, 0; 0, 0, 1; 0, 1, 0]
+      #   R_L2 (Roll=90°, Yaw=0°)   = [ 1, 0, 0; 0, 0,-1; 0, 1, 0]
+      # Relative: R_L2_to_L1 = R_L2 * R_L1^T = [-1, 0, 0; 0,-1, 0; 0, 0, 1]
+      extrinsic_R2: [-1.00000,  0.00000,  0.00000,
+                      0.00000, -1.00000,  0.00000,
+                      0.00000,  0.00000,  1.00000]
+
+      # ======================================================================
+      # RELATIVE TRANSFORM: LiDAR 2 w.r.t. LiDAR 1 (IMU Frame)
+      # ======================================================================
+      # Following FAST_LIO_MULTI convention: providing relative transform as
+      # a convenience parameter for internal fusion algorithms.
+      #
+      # Since LiDAR 1 = IMU reference frame:
+      # - extrinsic_T_L2_wrt_L1 = extrinsic_T2 (they're the same)
+      # - extrinsic_R_L2_wrt_L1 = extrinsic_R2 (they're the same)
+      #
+      # Translation: LiDAR 2 is 22cm to the right of LiDAR 1/IMU
+      # Rotation: LiDAR 2 faces opposite direction (180° yaw relative rotation)
+      # ======================================================================
+      extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]  # Same as extrinsic_T2
+
+      # Relative rotation: 180° yaw (sensors facing opposite directions)
       extrinsic_R_L2_wrt_L1: [-1.00000,  0.00000,  0.00000,
-                              -0.00000, -1.00000,  0.00000,
+                               0.00000, -1.00000,  0.00000,
                                0.00000,  0.00000,  1.00000]
 
     # ==========================================================================
@@ -285,34 +286,44 @@
                                          # For mines: -1 recommended (single complete map)
 
 ###############################################################################
-# CALIBRATION INSTRUCTIONS
+# CALIBRATION INSTRUCTIONS - IMU BODY FRAME REFERENCE
 ###############################################################################
 #
-# To measure extrinsic parameters on your platform:
+# FAST_LIO_MULTI uses the IMU BODY FRAME as the primary reference.
+# This configuration uses LiDAR 1's built-in IMU as the reference frame.
 #
-# 1. TRANSLATION MEASUREMENT:
-#    - Mark base_link position (typically IMU center or vehicle center)
-#    - Measure XYZ distance from base_link to each LiDAR sensor center
-#    - Use metric tape measure or CAD model
-#    - Record as [x, y, z] in meters with proper signs (±)
+# 1. IDENTIFY YOUR IMU REFERENCE:
+#    - Built-in IMU from one of the LiDARs (most common for MID-360)
+#    - External IMU (separate sensor)
+#    - This config assumes: LiDAR 1 (192.168.1.10) built-in IMU
 #
-# 2. ROTATION MEASUREMENT:
-#    - Determine sensor orientation relative to base frame
-#    - Front-facing = Identity matrix [1,0,0, 0,1,0, 0,0,1]
-#    - Rear-facing (180° yaw) = [-1,0,0, 0,-1,0, 0,0,1]
-#    - Use rotation matrix calculator for complex angles
+# 2. PRIMARY LIDAR (with IMU) EXTRINSICS:
+#    - If using built-in IMU: extrinsic_T = [0,0,0], extrinsic_R = Identity
+#    - The LiDAR optical center coincides with the IMU center
+#    - No transformation needed
 #
-# 3. OFFLINE CALIBRATION (Advanced):
+# 3. SECONDARY LIDAR EXTRINSICS:
+#    - Measure position RELATIVE TO PRIMARY LIDAR (not base_link!)
+#    - Translation: [dx, dy, dz] from LiDAR 1 center to LiDAR 2 center
+#    - Rotation: Orientation difference between the two sensors
+#    - Use physical measurements or CAD model
+#
+# 4. COMPUTING FROM BASE_LINK EXTRINSICS:
+#    If you have extrinsics relative to base_link:
+#    - T_L2_to_IMU = T_L2_to_base - T_L1_to_base
+#    - R_L2_to_IMU = R_L2_to_base * R_L1_to_base^T (matrix multiplication)
+#
+# 5. OFFLINE CALIBRATION (Advanced):
 #    - Collect rosbag with both sensors in static environment
-#    - Use GICP-based calibration (TIERS tools or custom)
-#    - Extract rotation + translation matrices
-#    - Update extrinsic_T and extrinsic_R parameters
+#    - Use GICP-based calibration (LI-Init, TIERS tools)
+#    - Extract sensor-to-sensor transformation
+#    - Update extrinsic_T2 and extrinsic_R2 parameters
 #
-# 4. VALIDATION:
-#    - Visualize both sensor clouds in RViz
-#    - Check alignment of overlapping regions
-#    - Verify no ghosting or misalignment
-#    - Adjust parameters if needed
+# 6. VALIDATION:
+#    - Visualize both sensor clouds in RViz2
+#    - Check alignment at sensor overlap regions
+#    - Verify no ghosting, double walls, or misalignment
+#    - Static scene test: walls should be thin (10-20cm), not thick (50cm+)
 #
 ###############################################################################
 

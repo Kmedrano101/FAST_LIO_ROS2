@@ -1,0 +1,153 @@
+###############################################################################
+# TEST 4: Dual LiDAR Static Fusion Test
+# Purpose: Test dual LiDAR fusion without motion (easiest case)
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # MULTI-LIDAR: ENABLED - BUNDLE MODE (Most Robust)
+    # ==========================================================================
+    multi_lidar: true                    # ← ENABLED: Testing dual LiDAR fusion
+
+    # Start with BUNDLE mode (merge scans before update)
+    # This is the most robust mode for initial testing
+    update_mode: 0                       # 0=Bundle, 1=Async, 2=Adaptive
+
+    # Bundle mode parameters (not needed but kept for reference)
+    adaptive_fov_threshold: 5000
+    adaptive_feature_density: 0.002
+    adaptive_hysteresis_ratio: 1.2
+    adaptive_stability_frames: 3
+    adaptive_debug_output: false
+
+    # ==========================================================================
+    # FAST-LIO CORE PARAMETERS
+    # ==========================================================================
+    feature_extract_enable: false
+    point_filter_num: 2
+    max_iteration: 4
+    filter_size_surf: 0.3
+    filter_size_map: 0.4
+    cube_side_length: 200.0
+    runtime_pos_log_enable: false
+    map_file_path: "/home/jetson/ros2_ws/src/fast_lio_ros2/PCD/test_4_dual_static.pcd"
+
+    # ==========================================================================
+    # COMMON SETTINGS: DUAL LIDAR
+    # ==========================================================================
+    common:
+      # Both LiDAR topics enabled
+      lid_topic:  "/livox/lidar_192_168_1_10"   # LiDAR 1 (IMU reference)
+      lid_topic2: "/livox/lidar_192_168_1_18"   # LiDAR 2
+      imu_topic:  "/livox/imu_192_168_1_10"     # IMU from LiDAR 1
+
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    # ==========================================================================
+    # PREPROCESSING PARAMETERS
+    # ==========================================================================
+    preprocess:
+      # PRIMARY LIDAR (LiDAR 1)
+      lidar_type: 4
+      scan_line: 4
+      blind: 0.3
+      scan_rate: 10
+      timestamp_unit: 3
+      point_filter_num: 2
+
+      # SECONDARY LIDAR (LiDAR 2)
+      lidar_type2: 4
+      scan_line2: 4
+      blind2: 0.3
+      scan_rate2: 10
+      timestamp_unit2: 3
+      point_filter_num2: 2
+
+    # ==========================================================================
+    # MAPPING & SENSOR FUSION PARAMETERS
+    # ==========================================================================
+    mapping:
+      # IMU Noise Model
+      acc_cov: 0.5
+      gyr_cov: 0.5
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+
+      # Field of View
+      fov_degree: 360.0                  # Combined FOV
+      det_range: 50.0
+
+      # Extrinsic Calibration
+      extrinsic_est_en: false
+
+      # ======================================================================
+      # LIDAR 1 EXTRINSICS: Identity (IMU reference frame)
+      # ======================================================================
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+      # ======================================================================
+      # LIDAR 2 EXTRINSICS: Relative to LiDAR 1/IMU
+      # ======================================================================
+      extrinsic_T2: [0.0, -0.22, 0.0]    # 22cm right of LiDAR 1
+      extrinsic_R2: [-1.0,  0.0,  0.0,
+                      0.0, -1.0,  0.0,
+                      0.0,  0.0,  1.0]   # 180° yaw rotation
+
+      # Relative transform (same as T2/R2 since L1 is reference)
+      extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]
+      extrinsic_R_L2_wrt_L1: [-1.0,  0.0,  0.0,
+                               0.0, -1.0,  0.0,
+                               0.0,  0.0,  1.0]
+
+    # ==========================================================================
+    # PUBLISHING OPTIONS
+    # ==========================================================================
+    publish:
+      path_en: true
+      effect_map_en: false
+      map_en: true
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: true
+
+    # ==========================================================================
+    # PCD MAP SAVING
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: true
+      pcd_file_name: "test_4_dual_static.pcd"
+      interval: -1
+
+###############################################################################
+# TEST 4 INSTRUCTIONS
+###############################################################################
+#
+# 1. Position robot facing corridor or wall with clear geometry
+#
+# 2. Launch with:
+#    ros2 launch fast_lio_ros2 test_4_dual_static.launch.py
+#
+# 3. KEEP ROBOT COMPLETELY STATIONARY for 60 seconds
+#
+# 4. Observe in RViz:
+#    - /cloud_registered (global map)
+#    - /cloud_registered_body (current scan)
+#
+# 5. Check for:
+#    ✅ Walls are thin (10-20cm), not thick (>40cm)
+#    ✅ No ghosting or double features
+#    ✅ Corners align sharply (90°)
+#    ✅ No console errors
+#
+# 6. Save PCD and inspect in CloudCompare:
+#    ros2 service call /save_pcd std_srvs/srv/Trigger
+#
+# 7. If PASS: Proceed to Test 5 (motion)
+#    If FAIL: Go back to Test 2 (check extrinsics)
+#
+###############################################################################

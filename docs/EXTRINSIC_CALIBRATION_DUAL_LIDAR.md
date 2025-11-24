@@ -92,8 +92,8 @@ extrinsic_R_L2_wrt_L1: [-0.2756374,  0.0,  0.9612617,    # ~16° pitch rotation
 
 - **Platform**: NVIDIA Jetson ORIN
 - **Sensors**: 2x Livox MID-360
-- **Reference Frame**: `base_link` (standard ROS convention)
-- **Sensor IPs**: 192.168.1.10 (LiDAR 1), 192.168.1.18 (LiDAR 2)
+- **Reference Frame**: **IMU body frame** (LiDAR 1's built-in IMU) - Following FAST_LIO_MULTI convention
+- **Sensor IPs**: 192.168.1.10 (LiDAR 1 with IMU reference), 192.168.1.18 (LiDAR 2)
 
 ### Livox Driver Configuration
 
@@ -135,33 +135,34 @@ From `/home/jetson/ros2_ws/src/livox_ros_driver2/config/multiple_netconfigs.json
 
 ### Current FAST-LIO Configuration
 
-From `/home/jetson/ros2_ws/src/fast_lio_ros2/config/dual_mid360_mine.yaml`:
+From `/home/kmedrano/ros2_ws/src/fast_lio_ros2/config/dual_mid360_mine.yaml`:
+
+**Using IMU Body Frame as Reference (FAST_LIO_MULTI approach):**
 
 ```yaml
 mapping:
-  # LiDAR 1 Extrinsics (to base_link)
-  extrinsic_T: [0.0, 0.11, 0.0]      # 11cm left (converted from 110mm)
-  extrinsic_R: [ 1.00000,  0.00000,  0.00000,
-                 0.00000,  0.00000, -1.00000,
-                 0.00000,  1.00000,  0.00000]  # Roll=90°, Yaw=0° (forward)
+  # REFERENCE FRAME: IMU body frame (LiDAR 1's built-in IMU at 192.168.1.10)
 
-  # LiDAR 2 Extrinsics (to base_link)
-  extrinsic_T2: [0.0, -0.11, 0.0]    # 11cm right
-  extrinsic_R2: [-1.00000,  0.00000,  0.00000,
-                  0.00000,  0.00000,  1.00000,
-                  0.00000,  1.00000,  0.00000]  # Roll=90°, Yaw=180° (backward)
+  # LiDAR 1 Extrinsics (to IMU body frame)
+  # IDENTITY: LiDAR 1 and IMU are co-located
+  extrinsic_T: [0.0, 0.0, 0.0]       # Identity transform
+  extrinsic_R: [1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 1.0]       # Identity rotation
+
+  # LiDAR 2 Extrinsics (to IMU body frame / LiDAR 1)
+  # Relative to LiDAR 1: 22cm lateral, 180° yaw
+  extrinsic_T2: [0.0, -0.22, 0.0]    # 22cm to the right of LiDAR 1
+  extrinsic_R2: [-1.0,  0.0,  0.0,
+                  0.0, -1.0,  0.0,
+                  0.0,  0.0,  1.0]   # 180° yaw relative rotation
 ```
 
-**DISCREPANCY DETECTED:**
-The current FAST-LIO config shows:
-- LiDAR 1: Yaw=0° (forward)
-- LiDAR 2: Yaw=180° (backward)
-
-But Livox driver config shows:
-- LiDAR 1 (192.168.1.10): Yaw=180° (backward)
-- LiDAR 2 (192.168.1.18): Yaw=0° (forward)
-
-**This is REVERSED!** The configurations are mismatched.
+**Configuration Notes:**
+- **Reference changed from `base_link` to IMU body frame** to match FAST_LIO_MULTI
+- LiDAR 1 serves as the IMU reference (identity transform)
+- LiDAR 2 position is now relative to LiDAR 1, not base_link
+- This matches the FAST-LIO standard where IMU is the primary reference
 
 ---
 
@@ -192,35 +193,40 @@ Base Link Frame (vehicle/robot):
 ### Transformation Chain
 
 ```
-World Frame
+World Frame (map/odom)
     ↓
-Base Link (reference for all extrinsics)
+IMU Body Frame (PRIMARY REFERENCE - LiDAR 1's built-in IMU)
     ↓
-IMU Frame (if separate from base_link)
+├── LiDAR 1 Frame (co-located with IMU) → Point Cloud 1
     ↓
-LiDAR 1 Frame → Point Cloud 1
-    ↓
-LiDAR 2 Frame → Point Cloud 2
+└── LiDAR 2 Frame (22cm lateral, 180° yaw) → Point Cloud 2
 ```
 
-For FAST-LIO, if IMU is separate from base_link:
-- Define LiDAR → IMU transforms, OR
-- Define LiDAR → base_link if IMU coincides with base_link
+**FAST-LIO Standard Approach:**
+- **IMU body frame is the primary reference** for all extrinsics
+- All sensor poses are expressed relative to this IMU frame
+- For MID-360 with built-in IMU: LiDAR optical center = IMU center
 
-In our case, we're using **base_link as the reference** (common for ground robots).
+**Our Configuration:**
+- Using **LiDAR 1's (192.168.1.10) built-in IMU** as the reference
+- LiDAR 1 → IMU: Identity transform (co-located)
+- LiDAR 2 → IMU: Computed relative to LiDAR 1's position/orientation
 
 ---
 
-## Converting Livox to FAST-LIO Extrinsics
+## Converting Livox to FAST-LIO Extrinsics (IMU Body Frame)
 
 ### Step 1: Understand the Livox Parameters
 
-**LiDAR 1 (192.168.1.10):**
-- Position: `[x=0, y=110mm, z=0]` → `[0.0, 0.11, 0.0]` meters
+**NOTE:** Livox driver extrinsics are relative to `base_link`, but FAST-LIO needs them relative to the **IMU body frame**.
+
+**LiDAR 1 (192.168.1.10) - Contains our reference IMU:**
+- Position relative to base_link: `[x=0, y=110mm, z=0]` → `[0.0, 0.11, 0.0]` meters
 - Orientation: Roll=90°, Pitch=0°, Yaw=180°
+- **This is our IMU reference frame**
 
 **LiDAR 2 (192.168.1.18):**
-- Position: `[x=0, y=-110mm, z=0]` → `[0.0, -0.11, 0.0]` meters
+- Position relative to base_link: `[x=0, y=-110mm, z=0]` → `[0.0, -0.11, 0.0]` meters
 - Orientation: Roll=90°, Pitch=0°, Yaw=0°
 
 ### Step 2: Convert Euler Angles to Rotation Matrices
@@ -304,24 +310,40 @@ extrinsic_R2: [1.0,  0.0,  0.0,
                0.0,  1.0,  0.0]
 ```
 
-### Step 3: Compute Relative Transform (L2 w.r.t. L1)
+### Step 3: Transform to IMU Body Frame Reference
+
+**Since we're using LiDAR 1's IMU as reference:**
+
+**LiDAR 1 → IMU:**
+- **Translation**: `[0.0, 0.0, 0.0]` - IDENTITY (co-located)
+- **Rotation**: Identity matrix (same frame)
+
+```yaml
+extrinsic_T: [0.0, 0.0, 0.0]
+extrinsic_R: [1.0, 0.0, 0.0,
+              0.0, 1.0, 0.0,
+              0.0, 0.0, 1.0]
+```
+
+**LiDAR 2 → IMU (LiDAR 1):**
+
+Compute relative transform from base_link-referenced poses:
 
 **Translation:**
 ```
-T_L2_wrt_L1 = T2 - T1
+T_L2_to_IMU = T_L2_to_base - T_L1_to_base
             = [0.0, -0.11, 0.0] - [0.0, 0.11, 0.0]
             = [0.0, -0.22, 0.0]
 ```
 
 **Rotation:**
 ```
-R_L2_wrt_L1 = R2 * R1^T
+R_L2_to_IMU = R_L2_to_base * R_L1_to_base^T
 
-R1^T = [-1.0,  0.0,  0.0]^T    R2 = [1.0,  0.0,  0.0]
-       [ 0.0,  0.0,  1.0]            [0.0,  0.0, -1.0]
-       [ 0.0,  1.0,  0.0]            [0.0,  1.0,  0.0]
+R_L1 (base): [-1, 0, 0; 0, 0, 1; 0, 1, 0]  (Roll=90°, Yaw=180°)
+R_L2 (base): [ 1, 0, 0; 0, 0,-1; 0, 1, 0]  (Roll=90°, Yaw=0°)
 
-R_L2_wrt_L1 = [-1.0,  0.0,  0.0]
+R_L2_to_IMU = [-1.0,  0.0,  0.0]
               [ 0.0, -1.0,  0.0]
               [ 0.0,  0.0,  1.0]
 ```
@@ -330,62 +352,69 @@ This represents a **180° yaw rotation** (sensors facing opposite directions).
 
 ---
 
-## Corrected FAST-LIO Configuration
+## Updated FAST-LIO Configuration (IMU Body Frame)
 
-### Summary of Corrections Needed
+### Configuration Philosophy
 
-The current `dual_mid360_mine.yaml` has the LiDAR orientations **reversed** compared to the Livox driver configuration.
+**Changed Reference Frame:** From `base_link` to **IMU body frame** (LiDAR 1's built-in IMU)
 
-**Current (INCORRECT):**
-- LiDAR 1 (192.168.1.10): Facing forward (Yaw=0°)
-- LiDAR 2 (192.168.1.18): Facing backward (Yaw=180°)
+This matches FAST_LIO_MULTI's standard approach where:
+- IMU body frame is the primary reference
+- Primary LiDAR (with IMU) has identity transform
+- Secondary LiDAR(s) positioned relative to IMU/primary LiDAR
 
-**Should be (CORRECT):**
-- LiDAR 1 (192.168.1.10): Facing backward (Yaw=180°) ← matches Livox config
-- LiDAR 2 (192.168.1.18): Facing forward (Yaw=0°) ← matches Livox config
-
-### Corrected Configuration
+### Updated Configuration
 
 ```yaml
 mapping:
   # ======================================================================
-  # LIDAR 1 EXTRINSICS (IP: 192.168.1.10 → Base Link)
+  # REFERENCE FRAME: IMU BODY FRAME (LiDAR 1 Built-in IMU)
   # ======================================================================
-  # Position: 11cm to the LEFT of base_link (+Y axis)
-  # Orientation: Roll=90°, Pitch=0°, Yaw=180° (FACING BACKWARD)
-  # ======================================================================
-  extrinsic_T: [0.0, 0.11, 0.0]      # [x, y, z] in meters
-
-  # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=180°)
-  extrinsic_R: [-1.0,  0.0,  0.0,
-                 0.0,  0.0,  1.0,
-                 0.0,  1.0,  0.0]
 
   # ======================================================================
-  # LIDAR 2 EXTRINSICS (IP: 192.168.1.18 → Base Link)
+  # LIDAR 1 EXTRINSICS (Primary LiDAR → IMU Body Frame)
   # ======================================================================
-  # Position: 11cm to the RIGHT of base_link (-Y axis)
-  # Orientation: Roll=90°, Pitch=0°, Yaw=0° (FACING FORWARD)
+  # IP: 192.168.1.10 (Contains the reference IMU)
+  # IDENTITY: LiDAR 1 optical center = IMU center (co-located)
   # ======================================================================
-  extrinsic_T2: [0.0, -0.11, 0.0]    # [x, y, z] in meters
+  extrinsic_T: [0.0, 0.0, 0.0]       # Identity translation
 
-  # Rotation matrix from Euler angles (Roll=90°, Pitch=0°, Yaw=0°)
-  extrinsic_R2: [1.0,  0.0,  0.0,
-                 0.0,  0.0, -1.0,
-                 0.0,  1.0,  0.0]
+  extrinsic_R: [1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 1.0]       # Identity rotation
+
+  # ======================================================================
+  # LIDAR 2 EXTRINSICS (Secondary LiDAR → IMU Body Frame)
+  # ======================================================================
+  # IP: 192.168.1.18
+  # Position: 22cm to the RIGHT of LiDAR 1/IMU
+  # Orientation: 180° yaw (facing opposite direction)
+  # ======================================================================
+  extrinsic_T2: [0.0, -0.22, 0.0]    # 22cm lateral offset
+
+  extrinsic_R2: [-1.0,  0.0,  0.0,
+                  0.0, -1.0,  0.0,
+                  0.0,  0.0,  1.0]   # 180° yaw rotation
 
   # ======================================================================
   # RELATIVE TRANSFORM: LiDAR 2 w.r.t. LiDAR 1
   # ======================================================================
-  # Translation: L2 is 22cm to the RIGHT of L1 (-Y direction)
+  # Same as extrinsic_T2 and extrinsic_R2 since LiDAR 1 = IMU reference
   extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]
-
-  # Rotation: L2 faces forward (0°), L1 faces backward (180°)
-  # Relative rotation = 180° yaw difference
   extrinsic_R_L2_wrt_L1: [-1.0,  0.0,  0.0,
                            0.0, -1.0,  0.0,
                            0.0,  0.0,  1.0]
 ```
+
+### Key Changes from Base Link Reference:
+
+| Parameter | Old (base_link) | New (IMU body frame) |
+|-----------|----------------|---------------------|
+| **Reference** | `base_link` | IMU body (LiDAR 1) |
+| **extrinsic_T** | `[0.0, 0.11, 0.0]` | `[0.0, 0.0, 0.0]` (identity) |
+| **extrinsic_R** | Roll+Yaw transform | Identity matrix |
+| **extrinsic_T2** | `[0.0, -0.11, 0.0]` | `[0.0, -0.22, 0.0]` (relative to L1) |
+| **extrinsic_R2** | Roll+Yaw transform | 180° yaw (relative to L1) |
 
 ---
 
@@ -507,11 +536,15 @@ print(R_L2_wrt_L1)
 
 | Aspect | FAST_LIO_MULTI | Our Setup |
 |--------|----------------|-----------|
-| Reference Frame | IMU body frame | `base_link` |
+| Reference Frame | IMU body frame | **IMU body frame** (LiDAR 1) ✅ |
 | Sensor Orientation | Tilted ±143° (wide FOV) | One forward, one backward (180° coverage) |
-| Input Format | Rotation matrices | Euler angles (Livox driver) |
-| Baseline | ~13cm | 22cm (11cm each side) |
+| Input Format | Rotation matrices | Rotation matrices (converted from Livox Euler) |
+| Baseline | ~13cm | 22cm (lateral separation) |
+| Primary LiDAR | Identity transform | **Identity transform** ✅ |
+| Secondary LiDAR | Relative to primary | **Relative to primary** ✅ |
 | Use Case | Drone/aerial mapping | Ground robot (mine navigation) |
+
+**✅ = Now matches FAST_LIO_MULTI convention**
 
 ---
 

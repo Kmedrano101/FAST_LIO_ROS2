@@ -1,0 +1,118 @@
+###############################################################################
+# TEST 3: Single LiDAR FAST-LIO Configuration
+# Purpose: Establish baseline performance with single LiDAR before dual fusion
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # MULTI-LIDAR: DISABLED FOR BASELINE TEST
+    # ==========================================================================
+    multi_lidar: false                   # ← DISABLED: Testing single LiDAR only
+
+    # Update mode (not used in single LiDAR, but keep for consistency)
+    update_mode: 0
+
+    # ==========================================================================
+    # FAST-LIO CORE PARAMETERS (Same as production)
+    # ==========================================================================
+    feature_extract_enable: false
+    point_filter_num: 2
+    max_iteration: 4
+    filter_size_surf: 0.3
+    filter_size_map: 0.4
+    cube_side_length: 200.0
+    runtime_pos_log_enable: false
+    map_file_path: "/home/jetson/ros2_ws/src/fast_lio_ros2/PCD/test_3_single_lidar.pcd"
+
+    # ==========================================================================
+    # COMMON SETTINGS: SINGLE LIDAR ONLY
+    # ==========================================================================
+    common:
+      # Using ONLY LiDAR 1 with its built-in IMU
+      lid_topic:  "/livox/lidar_192_168_1_10"   # LiDAR 1 only
+      # lid_topic2: COMMENTED OUT - not used in single LiDAR mode
+      imu_topic:  "/livox/imu_192_168_1_10"
+
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    # ==========================================================================
+    # PREPROCESSING PARAMETERS
+    # ==========================================================================
+    preprocess:
+      lidar_type: 4                      # MID-360
+      scan_line: 4
+      blind: 0.3
+      scan_rate: 10
+      timestamp_unit: 3
+      point_filter_num: 2
+
+    # ==========================================================================
+    # MAPPING & SENSOR FUSION PARAMETERS
+    # ==========================================================================
+    mapping:
+      # IMU Noise Model
+      acc_cov: 0.5
+      gyr_cov: 0.5
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+
+      # Field of View
+      fov_degree: 120.0                  # Single MID-360 FOV
+      det_range: 50.0
+
+      # Extrinsic Calibration
+      extrinsic_est_en: false
+
+      # LiDAR → IMU: Identity (using built-in IMU)
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    # ==========================================================================
+    # PUBLISHING OPTIONS
+    # ==========================================================================
+    publish:
+      path_en: true
+      effect_map_en: false
+      map_en: true
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: true
+
+    # ==========================================================================
+    # PCD MAP SAVING
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: true
+      pcd_file_name: "test_3_single_lidar.pcd"
+      interval: -1
+
+###############################################################################
+# TEST 3 INSTRUCTIONS
+###############################################################################
+#
+# 1. Launch with:
+#    ros2 launch fast_lio_ros2 test_3_single_lidar.launch.py
+#
+# 2. Static test (30 seconds):
+#    - Keep robot completely still
+#    - Record odometry drift
+#
+# 3. Motion test:
+#    - Move forward/backward 1m
+#    - Rotate 90° in place
+#    - Return to start
+#    - Measure loop closure error
+#
+# 4. Record baseline metrics:
+#    - Update rate (Hz)
+#    - Static drift (cm/min)
+#    - Loop closure error (cm)
+#    - Feature density (pts/scan)
+#
+# 5. Save results for comparison with dual LiDAR tests
+#
+###############################################################################
