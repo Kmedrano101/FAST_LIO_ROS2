@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """
-TEST 1: Raw LiDAR Data Visualization
-======================================
+DESKTOP TEST 1: Raw LiDAR Data Visualization (Desktop PC)
+==========================================================
 
-This launch file starts ONLY the Livox driver to verify:
-- Both LiDARs are publishing data
-- IMU is working
-- Network connectivity is good
+This launch file runs on the DESKTOP PC to visualize data from Jetson.
 
-No FAST-LIO processing, just raw sensor data.
+Setup:
+- Jetson: Runs livox_ros_driver2 (publishes point clouds + IMU)
+- Desktop: Runs this launch file (visualizes with RViz)
+- Both on same network
 
-Usage:
-    ros2 launch fast_lio_ros2 test_1_raw_lidar.launch.py
+On Jetson:
+    ros2 launch livox_ros_driver2 multiple_lidars.launch.py
 
-Then in separate terminal:
-    rviz2 -d ~/ros2_ws/src/fast_lio_ros2/rviz/dual_lidar_calibration.rviz
+On Desktop:
+    ros2 launch fast_lio_ros2 desktop_test_1_raw_lidar.launch.py
+
+What this does:
+- Publishes static TF: livox_frame (sensor frame) ← needed for RViz
+- Launches RViz with calibration config
+- NO Livox driver (already running on Jetson)
 """
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition
 
 
@@ -34,15 +38,21 @@ def generate_launch_description():
         description='Launch RViz2 for visualization'
     )
 
-    # Find packages
-    livox_share = FindPackageShare('livox_ros_driver2')
+    # Find package
     fast_lio_share = FindPackageShare('fast_lio_ros2')
 
-    # Livox driver launch
-    livox_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([livox_share, 'launch', 'multiple_lidars.launch.py'])
-        ])
+    # Static TF: Provide identity transform for livox_frame
+    # This is just for RViz visualization reference
+    tf_world_to_livox = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='world_to_livox_frame',
+        arguments=[
+            '0', '0', '0',  # x, y, z
+            '0', '0', '0',  # roll, pitch, yaw
+            'world', 'livox_frame'
+        ],
+        output='screen'
     )
 
     # RViz config
@@ -62,6 +72,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_rviz_arg,
-        livox_launch,
+        tf_world_to_livox,
         rviz_node,
     ])

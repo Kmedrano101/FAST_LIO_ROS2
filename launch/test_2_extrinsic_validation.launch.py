@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """
-TEST 2: Extrinsic Calibration Validation
-=========================================
+DESKTOP TEST 2: Extrinsic Calibration Validation (Desktop PC)
+==============================================================
 
-This launch file starts:
-- Livox driver with both LiDARs
-- Static TF publisher for extrinsic transforms
-- RViz with calibration view
+This launch file runs on the DESKTOP PC to validate extrinsic calibration.
 
-Purpose: Verify extrinsic parameters align sensors correctly
+Setup:
+- Jetson: Runs livox_ros_driver2 (publishes point clouds + IMU)
+- Desktop: Runs this launch file (visualizes with TF transforms)
+- Both on same network
 
-Usage:
-    ros2 launch fast_lio_ros2 test_2_extrinsic_validation.launch.py
+On Jetson:
+    ros2 launch livox_ros_driver2 multiple_lidars.launch.py
 
-Expected: Point clouds should align on flat walls (single thin plane)
+On Desktop:
+    ros2 launch fast_lio_ros2 desktop_test_2_extrinsic_validation.launch.py
+
+What this does:
+- Publishes TF tree: world → base_link → lidar_1_frame, lidar_2_frame
+- Uses extrinsics from livox driver config
+- Launches RViz for alignment visualization
+
+Expected: Point clouds align on walls (single thin plane, 10-20cm)
 """
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition
 import math
 
@@ -34,45 +41,74 @@ def generate_launch_description():
         description='Launch RViz2 for visualization'
     )
 
-    # Find packages
-    livox_share = FindPackageShare('livox_ros_driver2')
+    # Find package
     fast_lio_share = FindPackageShare('fast_lio_ros2')
 
-    # Livox driver launch
-    livox_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            PathJoinSubstitution([livox_share, 'launch', 'multiple_lidars.launch.py'])
-        ])
+    # Static TF: world → base_link (identity, just for reference)
+    tf_world_to_base = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='world_to_base_link',
+        arguments=[
+            '0', '0', '0',  # x, y, z
+            '0', '0', '0',  # roll, pitch, yaw
+            'world', 'base_link'
+        ],
+        output='screen'
     )
 
-    # Static TF: base_link → lidar_1 (IMU reference frame)
-    # From Livox config: [0, 0.11, 0], Roll=90°, Yaw=180°
-    # But for visualization, we show the transform from base_link
+    # Static TF: base_link → lidar_1_frame (LiDAR 1)
+    # From multiple_netconfigs.json:
+    #   Position: [x=0, y=110mm, z=0] = [0, 0.11, 0]
+    #   Orientation: Roll=90°, Pitch=0°, Yaw=180°
+    # Convert to radians: Roll=1.5708, Pitch=0, Yaw=3.14159
+    # Order for static_transform_publisher: x y z yaw pitch roll
     tf_base_to_l1 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_lidar1',
         arguments=[
-            '0', '0.11', '0',  # x, y, z
-            '3.14159', '0', '1.5708',  # yaw, pitch, roll (rad)
+            '0', '0.11', '0',           # x, y, z (meters)
+            '3.14159', '0', '1.5708',   # yaw, pitch, roll (radians)
             'base_link', 'lidar_1_frame'
-        ]
+        ],
+        output='screen'
     )
 
-    # Static TF: base_link → lidar_2
-    # From Livox config: [0, -0.11, 0], Roll=90°, Yaw=0°
+    # Static TF: base_link → lidar_2_frame (LiDAR 2)
+    # From multiple_netconfigs.json:
+    #   Position: [x=0, y=-110mm, z=0] = [0, -0.11, 0]
+    #   Orientation: Roll=90°, Pitch=0°, Yaw=0°
+    # Convert to radians: Roll=1.5708, Pitch=0, Yaw=0
     tf_base_to_l2 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_lidar2',
         arguments=[
-            '0', '-0.11', '0',  # x, y, z
-            '0', '0', '1.5708',  # yaw, pitch, roll (rad)
+            '0', '-0.11', '0',          # x, y, z (meters)
+            '0', '0', '1.5708',         # yaw, pitch, roll (radians)
             'base_link', 'lidar_2_frame'
-        ]
+        ],
+        output='screen'
     )
 
-    # RViz config
+    # Static TF: livox_frame → lidar_1_frame (for point cloud visualization)
+    # The Livox driver publishes clouds in "livox_frame"
+    # We need to connect this to our lidar frames
+    # For LiDAR 1: we'll make livox_frame = lidar_1_frame for now
+    tf_livox_to_l1 = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='livox_to_lidar1',
+        arguments=[
+            '0', '0', '0',  # identity
+            '0', '0', '0',
+            'lidar_1_frame', 'livox_frame'
+        ],
+        output='screen'
+    )
+
+    # RViz config - update fixed frame to base_link
     rviz_config = PathJoinSubstitution([
         fast_lio_share, 'rviz', 'dual_lidar_calibration.rviz'
     ])
@@ -89,8 +125,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_rviz_arg,
-        livox_launch,
+        tf_world_to_base,
         tf_base_to_l1,
         tf_base_to_l2,
+        tf_livox_to_l1,
         rviz_node,
     ])
