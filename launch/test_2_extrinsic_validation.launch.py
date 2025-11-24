@@ -92,18 +92,17 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Static TF: livox_frame → lidar_1_frame (for point cloud visualization)
-    # The Livox driver publishes clouds in "livox_frame"
-    # We need to connect this to our lidar frames
-    # For LiDAR 1: we'll make livox_frame = lidar_1_frame for now
-    tf_livox_to_l1 = Node(
+    # Static TF: base_link → frame_default (for point cloud visualization)
+    # The Livox driver publishes clouds with frame_id: "frame_default"
+    # We need to connect this to base_link so RViz can display the clouds
+    tf_base_to_frame_default = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='livox_to_lidar1',
+        name='base_to_frame_default',
         arguments=[
             '0', '0', '0',  # identity
             '0', '0', '0',
-            'lidar_1_frame', 'livox_frame'
+            'base_link', 'frame_default'
         ],
         output='screen'
     )
@@ -128,6 +127,6 @@ def generate_launch_description():
         tf_world_to_base,
         tf_base_to_l1,
         tf_base_to_l2,
-        tf_livox_to_l1,
+        tf_base_to_frame_default,
         rviz_node,
     ])
