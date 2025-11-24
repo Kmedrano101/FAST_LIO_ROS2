@@ -1,0 +1,251 @@
+I'll provide a complete step-by-step guide to set up PTP synchronization on your
+  Jetson for the Livox MID-360 sensors.
+
+● Step-by-Step PTP Setup on Jetson for Livox MID-360
+
+  Step 1: Install linuxptp Package
+
+  # Update package list
+  sudo apt update
+
+  # Install linuxptp (PTP daemon)
+  sudo apt install -y linuxptp
+
+  # Verify installation
+  ptp4l -v
+
+  Step 2: Check Your Network Interface
+
+  # Find your ethernet interface name (usually eth0 or enp...)
+  ip link show
+
+  # Check if hardware timestamping is supported
+  ethtool -T eth0
+
+  Expected output should show: SOF_TIMESTAMPING_TX_HARDWARE and
+  SOF_TIMESTAMPING_RX_HARDWARE. If not, you'll need to use software timestamping.
+
+  Step 3: Stop Default PTP Services (if running)
+
+  # Stop and disable default ptp4l service
+  sudo systemctl stop ptp4l
+  sudo systemctl disable ptp4l
+
+  Step 4: Create PTP Configuration File
+
+  Create a configuration file for the Jetson to act as PTP master:
+
+  sudo mkdir -p /etc/linuxptp
+  sudo nano /etc/linuxptp/ptp4l_master.conf
+
+  For Hardware Timestamping (if supported):
+  [global]
+  # Force this device to be the master
+  priority1 0
+  priority2 0
+
+  # Master clock settings
+  clockClass 128
+  clockAccuracy 0xFE
+  offsetScaledLogVariance 0xFFFF
+
+  # Network transport
+  network_transport UDPv4
+  delay_mechanism E2E
+
+  # Logging
+  logging_level 6
+  verbose 1
+  summary_interval 0
+
+  # Domain
+  domainNumber 0
+
+  # Allow this clock to become grandmaster
+  gmCapable 1
+
+  For Software Timestamping (if hardware not supported):
+  [global]
+  # Force this device to be the master
+  priority1 0
+  priority2 0
+
+  # Master clock settings
+  clockClass 128
+  clockAccuracy 0xFE
+  offsetScaledLogVariance 0xFFFF
+
+  # Software timestamping mode
+  time_stamping software
+
+  # Network transport
+  network_transport UDPv4
+  delay_mechanism E2E
+
+  # Logging
+  logging_level 6
+  verbose 1
+  summary_interval 0
+
+  # Domain
+  domainNumber 0
+
+  # Allow this clock to become grandmaster
+  gmCapable 1
+
+  Save and exit (Ctrl+X, then Y, then Enter).
+
+  Step 5: Test PTP Master Manually
+
+  First, test the setup manually to ensure it works:
+
+  # Terminal 1: Start PTP master on eth0 (replace eth0 with your interface)
+  sudo ptp4l -i eth0 -m -f /etc/linuxptp/ptp4l_master.conf
+
+  # Wait a few seconds, you should see PTP master messages
+
+  Open a second terminal:
+
+  # Terminal 2: Synchronize system clock to PTP hardware clock
+  sudo phc2sys -w -s eth0 -m -O 0
+
+  You should see logs indicating the Jetson is acting as PTP master. Keep these 
+  running and proceed to test with your Livox sensors.
+
+  Step 6: Configure Livox Sensors
+
+  The Livox MID-360 automatically syncs with any PTP master on the network - no
+  manual configuration needed! Just ensure:
+
+  1. Both LiDARs are connected to the same network as the Jetson
+  2. The network switch supports multicast (most do)
+  3. Firewall allows PTP traffic (UDP ports 319 and 320)
+
+  Step 7: Verify PTP Synchronization
+
+  Check if Livox sensors are syncing:
+
+  # Launch your Livox driver
+  ros2 launch livox_ros_driver2 multiple_lidars.launch.py
+
+  # In another terminal, check the timestamp type
+  ros2 topic echo /livox/lidar_192_168_1_10 --field header.stamp --once
+
+  You can also check PTP sync status in the point cloud header - when properly
+  synced, timestamp_type = 1 in the raw data packets.
+
+  Step 8: Create Systemd Services for Persistent PTP
+
+  Create services to start PTP automatically on boot:
+
+  Service 1: PTP Master (ptp4l)
+  sudo nano /etc/systemd/system/ptp4l-master.service
+
+  Add this content (replace eth0 with your interface):
+  [Unit]
+  Description=PTP Master Clock (ptp4l)
+  After=network-online.target
+  Wants=network-online.target
+
+  [Service]
+  Type=simple
+  ExecStart=/usr/sbin/ptp4l -i eth0 -m -f /etc/linuxptp/ptp4l_master.conf
+  Restart=on-failure
+  RestartSec=5
+
+  [Install]
+  WantedBy=multi-user.target
+
+  Service 2: System Clock Sync (phc2sys)
+  sudo nano /etc/systemd/system/phc2sys.service
+
+  Add this content (replace eth0 with your interface):
+  [Unit]
+  Description=Synchronize System Clock to PTP
+  After=ptp4l-master.service
+  Requires=ptp4l-master.service
+
+  [Service]
+  Type=simple
+  ExecStart=/usr/sbin/phc2sys -w -s eth0 -m -O 0
+  Restart=on-failure
+  RestartSec=5
+
+  [Install]
+  WantedBy=multi-user.target
+
+  Enable and start the services:
+  # Reload systemd
+  sudo systemctl daemon-reload
+
+  # Enable services to start on boot
+  sudo systemctl enable ptp4l-master.service
+  sudo systemctl enable phc2sys.service
+
+  # Start services now
+  sudo systemctl start ptp4l-master.service
+  sudo systemctl start phc2sys.service
+
+  # Check status
+  sudo systemctl status ptp4l-master.service
+  sudo systemctl status phc2sys.service
+
+  Step 9: Verify System is Working
+
+  # Check PTP master logs
+  sudo journalctl -u ptp4l-master.service -f
+
+  # Check system time sync logs
+  sudo journalctl -u phc2sys.service -f
+
+  # Check network for PTP traffic
+  sudo tcpdump -i eth0 port 319 or port 320
+
+  Step 10: Update FAST-LIO Configuration (Optional)
+
+  Your FAST-LIO config should already have time sync disabled since PTP handles it:
+
+  common:
+    time_sync_en: false         # Keep this false - PTP handles sync
+    time_offset_lidar_to_imu: 0.0
+
+  This is already correctly set in your test_3_single_lidar.yaml file.
+
+  Troubleshooting Commands
+
+  # Check if PTP packets are being sent
+  sudo tcpdump -i eth0 -n port 319 or port 320
+
+  # Monitor PTP synchronization status
+  watch -n 1 'sudo pmc -u -b 0 "GET CURRENT_DATA_SET"'
+
+  # Check network interface timestamping capabilities
+  ethtool -T eth0
+
+  # View detailed PTP logs
+  sudo journalctl -u ptp4l-master.service --since "10 minutes ago"
+
+  # Restart PTP services
+  sudo systemctl restart ptp4l-master.service phc2sys.service
+
+  Firewall Configuration (if needed)
+
+  # Allow PTP traffic
+  sudo ufw allow 319/udp
+  sudo ufw allow 320/udp
+
+  # Or if using iptables
+  sudo iptables -A INPUT -p udp --dport 319 -j ACCEPT
+  sudo iptables -A INPUT -p udp --dport 320 -j ACCEPT
+
+  Summary
+
+  - Jetson acts as PTP master clock with priority1=0 and priority2=0
+  - Livox MID-360 sensors automatically sync as PTP slaves (no configuration
+  needed)
+  - ROS2 timestamps will be synchronized across all sensors
+  - Systemd services ensure PTP starts on boot
+  - Synchronization accuracy should be in the microsecond range
+
+  This setup is crucial for your dual LiDAR fusion to have properly aligned
+  timestamps!

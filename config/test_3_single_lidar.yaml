@@ -17,11 +17,11 @@
     # FAST-LIO CORE PARAMETERS (Same as production)
     # ==========================================================================
     feature_extract_enable: false
-    point_filter_num: 2
-    max_iteration: 4
-    filter_size_surf: 0.3
-    filter_size_map: 0.4
-    cube_side_length: 200.0
+    point_filter_num: 3
+    max_iteration: 3
+    filter_size_surf: 0.5
+    filter_size_map: 0.5
+    cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/home/jetson/ros2_ws/src/fast_lio_ros2/PCD/test_3_single_lidar.pcd"
 
@@ -43,27 +43,26 @@
     preprocess:
       lidar_type: 4                      # MID-360
       scan_line: 4
-      blind: 0.3
+      blind: 0.5
       scan_rate: 10
-      timestamp_unit: 3
-      point_filter_num: 2
+      #timestamp_unit: 3
 
     # ==========================================================================
     # MAPPING & SENSOR FUSION PARAMETERS
     # ==========================================================================
     mapping:
       # IMU Noise Model
-      acc_cov: 0.5
-      gyr_cov: 0.5
+      acc_cov: 0.1
+      gyr_cov: 0.1
       b_acc_cov: 0.0001
       b_gyr_cov: 0.0001
 
       # Field of View
-      fov_degree: 120.0                  # Single MID-360 FOV
-      det_range: 50.0
+      fov_degree: 360.0                  # Single MID-360 FOV
+      det_range: 70.0
 
       # Extrinsic Calibration
-      extrinsic_est_en: false
+      extrinsic_est_en: true
 
       # LiDAR → IMU: Calibrated values from mid360.yaml
       extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
@@ -86,7 +85,7 @@
     # PCD MAP SAVING
     # ==========================================================================
     pcd_save:
-      pcd_save_en: true
+      pcd_save_en: false
       pcd_file_name: "test_3_single_lidar.pcd"
       interval: -1
 
