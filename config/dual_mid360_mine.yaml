@@ -12,26 +12,7 @@
     # MULTI-LIDAR CONFIGURATION
     # ==========================================================================
     multi_lidar: true                    # CRITICAL: Enable multi-LiDAR fusion mode
-                                         # When true, system subscribes to multiple LiDAR topics
-                                         # and fuses data using adaptive strategy
 
-    # ==========================================================================
-    # ADAPTIVE UPDATE STRATEGY PARAMETERS
-    # ==========================================================================
-    # Three update modes:
-    #   0 = BUNDLE:   Merge both LiDAR scans, then update filter once
-    #                 Pros: Max features per update, robust in sparse areas
-    #                 Cons: Lower update rate (10Hz), higher latency
-    #
-    #   1 = ASYNC:    Update filter separately for each LiDAR scan
-    #                 Pros: Higher update rate (20Hz), lower drift
-    #                 Cons: Risk of insufficient FOV per update
-    #
-    #   2 = ADAPTIVE: Dynamically switch between BUNDLE and ASYNC based on
-    #                 feature density and environment characteristics
-    #                 Pros: Best of both approaches, environment-aware
-    #                 Cons: Slightly higher computational complexity
-    # ==========================================================================
     update_mode: 2                       # 0=Bundle, 1=Async, 2=Adaptive
 
     # Adaptive mode thresholds
@@ -118,13 +99,9 @@
       # --- PRIMARY LIDAR (LiDAR 1: Front-facing) ---
       lidar_type: 4                      # 1=AVIA, 2=Velodyne, 3=Ouster, 4=MID360, 5=Gazebo
       scan_line: 4                       # MID-360 has 4 scan lines
-      blind: 0.3                         # Ignore points closer than 0.3m
-                                         # Prevents ground clutter and dust near sensor
-                                         # Increase to 0.5m if heavy dust
-      scan_rate: 10                      # LiDAR scan rate (Hz)
-                                         # MID-360 supports 10Hz (standard)
-      timestamp_unit: 3                  # 0=sec, 1=ms, 2=μs, 3=ns
-                                         # MID-360 uses nanoseconds
+      blind: 0.3                         # Ignore points closer than 0.3m, Increase to 0.5m if heavy dust
+      scan_rate: 10                      # LiDAR scan rate (Hz), MID-360 supports 10Hz
+      timestamp_unit: 3                  # 0=sec, 1=ms, 2=μs, 3=ns, MID-360 uses nanoseconds
       point_filter_num: 2                # Downsample: keep 1 in every 2 points
 
       # --- SECONDARY LIDAR (LiDAR 2: Rear-facing) ---
@@ -142,19 +119,15 @@
       # --- IMU Noise Model ---
       # IMPORTANT: Underground mines have high vibration from rough terrain
       # Increase covariance values to handle vibration noise
-      acc_cov: 0.5                       # Accelerometer noise covariance
-                                         # Default: 0.1, Mine: 0.5-1.0 (higher vibration)
-      gyr_cov: 0.5                       # Gyroscope noise covariance
-                                         # Default: 0.1, Mine: 0.5-1.0 (higher vibration)
+      acc_cov: 0.5                       # Accelerometer noise covariance, Mine: 0.5-1.0 (higher vibration)
+      gyr_cov: 0.5                       # Gyroscope noise covariance, Mine: 0.5-1.0 (higher vibration)
       b_acc_cov: 0.0001                  # Accelerometer bias covariance
       b_gyr_cov: 0.0001                  # Gyroscope bias covariance
 
       # --- Field of View & Detection Range ---
       fov_degree: 360.0                  # Total FOV with both sensors
-                                         # Front (120°) + Rear (120°) ≈ 360° coverage
       det_range: 50.0                    # Maximum detection range (meters)
-                                         # Typical mine visibility: 30-50m
-                                         # Reduce if dust limits effective range
+
 
       # --- Extrinsic Calibration ---
       # NOTE: Online estimation NOT supported for multi-LiDAR (yet)
@@ -165,10 +138,11 @@
       # REFERENCE FRAME: IMU BODY FRAME (LiDAR 1 Built-in IMU)
       # ======================================================================
       # Following FAST_LIO_MULTI convention:
-      # - Primary reference frame is the IMU body frame
+      # - Primary reference frame is the IMU body frame (L1's built-in IMU)
       # - Using built-in IMU from LiDAR 1 (IP: 192.168.1.10)
-      # - IMU frame coincides with LiDAR 1 optical center
-      # - All extrinsics express sensor pose relative to this IMU frame
+      # - UPDATED: L1 optical center has ~50mm offset from IMU (per Mid-360 docs)
+      # - All extrinsics express sensor pose relative to L1's IMU frame
+      # - This provides more accurate calibration than assuming co-location
       # ======================================================================
 
       # ======================================================================
@@ -176,19 +150,22 @@
       # ======================================================================
       # IP: 192.168.1.10 (Left Sensor - Built-in IMU is the reference)
       #
-      # IMPORTANT: Since we're using LiDAR 1's built-in IMU as reference,
-      # LiDAR 1 and IMU are CO-LOCATED at the same position and orientation.
+      # UPDATED: Using Mid-360 documentation values for LiDAR-to-IMU offset
+      # The LiDAR optical center and IMU are NOT perfectly co-located.
+      # There is a small offset between them as per Mid-360 datasheet.
       #
-      # Translation: IDENTITY (no offset, they're at the same location)
-      # Rotation: IDENTITY (no rotation, they share the same frame)
+      # Translation: Offset from LiDAR optical center to IMU in LiDAR body frame
+      # Rotation: IDENTITY (LiDAR and IMU share the same orientation)
       # ======================================================================
-      extrinsic_T: [0.0, 0.0, 0.0]       # [x, y, z] meters - IDENTITY transform
-      #   LiDAR 1 optical center = IMU center (co-located)
+      extrinsic_T: [-0.011, -0.02329, 0.04412]  # [x, y, z] meters - Mid-360 documentation
+      #   x = -0.011m:   11mm offset along X-axis
+      #   y = -0.02329m: 23.29mm offset along Y-axis
+      #   z =  0.04412m: 44.12mm offset along Z-axis
 
-      # Rotation matrix: IDENTITY (LiDAR 1 frame = IMU frame)
-      extrinsic_R: [ 1.00000,  0.00000,  0.00000,
-                     0.00000,  1.00000,  0.00000,
-                     0.00000,  0.00000,  1.00000]
+      # Rotation matrix: IDENTITY (LiDAR 1 and IMU share same orientation)
+      extrinsic_R: [ 1.00,  0.00,  0.00,
+                     0.00,  1.00,  0.00,
+                     0.00,  0.00,  1.00]
 
       # ======================================================================
       # LIDAR 2 EXTRINSICS (Secondary LiDAR → IMU Body Frame)
@@ -196,53 +173,22 @@
       # IP: 192.168.1.18 (Right Sensor)
       #
       # Physical Configuration (from Livox driver config):
-      # - LiDAR 1: 11cm left of base_link (+Y), facing backward (Yaw=180°)
-      # - LiDAR 2: 11cm right of base_link (-Y), facing forward (Yaw=0°)
-      # - Base separation: 22cm lateral
+      # - LiDAR 1: [0, 110, 0] mm relative to base_link, Roll=90°, Yaw=180° (backward)
+      # - LiDAR 2: [0, -110, 0] mm relative to base_link, Roll=90°, Yaw=0° (forward)
+      # - Base separation: 220mm lateral
       #
-      # Since IMU frame = LiDAR 1 frame:
-      # - LiDAR 1 is at [0, +0.11, 0] relative to base_link, Yaw=180°
-      # - LiDAR 2 is at [0, -0.11, 0] relative to base_link, Yaw=0°
-      #
-      # Transform LiDAR 2 → IMU (LiDAR 1):
-      # Translation: T_L2_to_IMU = T_L2_to_base - T_L1_to_base
-      #            = [0, -0.11, 0] - [0, +0.11, 0] = [0, -0.22, 0]
-      # Rotation: L2 faces forward (0°), L1 faces backward (180°)
-      #           Relative rotation = 180° yaw difference
+      # Computation accounting for L1 IMU offset:
+      # - L1 IMU position in base_link = L1_optical + R1 * [-0.011, -0.02329, 0.04412]
+      #                                = [0, 0.11, 0] + [0.011, 0.04412, -0.02329]
+      #                                = [0.011, 0.15412, -0.02329] meters
+      # - L2 optical center in base_link = [0, -0.11, 0] meters
+      # - L2 relative to L1 IMU in base_link = [0, -0.11, 0] - [0.011, 0.15412, -0.02329]
+      #                                      = [-0.011, -0.26412, 0.02329] meters
+      # - Rotate into L1 IMU frame using R1^T:
+      #   T_L2_in_L1_IMU = R1^T * [-0.011, -0.26412, 0.02329] = [0.011, 0.02329, -0.26412]
       # ======================================================================
-      extrinsic_T2: [0.0, -0.22, 0.0]    # [x, y, z] meters
-      #   x =  0.00m: Same longitudinal position as LiDAR 1
-      #   y = -0.22m: 22cm to the RIGHT of LiDAR 1 (lateral baseline)
-      #   z =  0.00m: Same height as LiDAR 1
-
-      # Rotation: LiDAR 2 faces opposite direction to LiDAR 1
-      # LiDAR 1 (IMU): Yaw=180° (backward), Roll=90°
-      # LiDAR 2:       Yaw=0° (forward), Roll=90°
-      # Relative rotation: 180° yaw rotation
-      # R_L2_to_IMU = R_L2_to_base * R_base_to_L1 = R_L2_to_base * R_L1_to_base^T
-      #
-      # From Livox config:
-      #   R_L1 (Roll=90°, Yaw=180°) = [-1, 0, 0; 0, 0, 1; 0, 1, 0]
-      #   R_L2 (Roll=90°, Yaw=0°)   = [ 1, 0, 0; 0, 0,-1; 0, 1, 0]
-      # Relative: R_L2_to_L1 = R_L2 * R_L1^T = [-1, 0, 0; 0,-1, 0; 0, 0, 1]
-      extrinsic_R2: [-1.00000,  0.00000,  0.00000,
-                      0.00000, -1.00000,  0.00000,
-                      0.00000,  0.00000,  1.00000]
-
-      # ======================================================================
-      # RELATIVE TRANSFORM: LiDAR 2 w.r.t. LiDAR 1 (IMU Frame)
-      # ======================================================================
-      # Following FAST_LIO_MULTI convention: providing relative transform as
-      # a convenience parameter for internal fusion algorithms.
-      #
-      # Since LiDAR 1 = IMU reference frame:
-      # - extrinsic_T_L2_wrt_L1 = extrinsic_T2 (they're the same)
-      # - extrinsic_R_L2_wrt_L1 = extrinsic_R2 (they're the same)
-      #
-      # Translation: LiDAR 2 is 22cm to the right of LiDAR 1/IMU
-      # Rotation: LiDAR 2 faces opposite direction (180° yaw relative rotation)
-      # ======================================================================
-      extrinsic_T_L2_wrt_L1: [0.0, -0.22, 0.0]  # Same as extrinsic_T2
+      
+      extrinsic_T_L2_wrt_L1: [0.011, 0.02329, -0.26412]  # Same as extrinsic_T2
 
       # Relative rotation: 180° yaw (sensors facing opposite directions)
       extrinsic_R_L2_wrt_L1: [-1.00000,  0.00000,  0.00000,
@@ -254,32 +200,18 @@
     # ==========================================================================
     publish:
       path_en: true                      # Publish odometry path (/path topic)
-                                         # Essential for visualization and monitoring
-
-      effect_map_en: false               # Publish effective map points
-                                         # Disable to reduce computational load
-
-      map_en: true                       # Publish global map (/cloud_registered)
-                                         # Important for map visualization
-
+      effect_map_en: false               # Publish effective map points, Disable to reduce computational load
+      map_en: true                       # Publish global map (/cloud_registered), map visualization
       scan_publish_en: true              # Publish current scan (/cloud_registered_body)
-                                         # Useful for debugging sensor alignment
-
       dense_publish_en: false            # Publish dense point cloud
-                                         # Disable to save bandwidth/CPU
-
-      scan_bodyframe_pub_en: true        # Publish scan in body frame
-                                         # Helps verify extrinsic calibration
+      scan_bodyframe_pub_en: true        # Publish scan in body frame, Helps verify extrinsic calibration
 
     # ==========================================================================
     # PCD MAP SAVING
     # ==========================================================================
     pcd_save:
       pcd_save_en: true                  # Save final map to PCD file
-                                         # Important for mine surveying/mapping
-
       pcd_file_name: "mine_dual_mid360.pcd"  # Output filename
-
       interval: -1                       # Save interval (# of LiDAR frames)
                                          # -1: Save all frames at end (single file)
                                          # >0: Save every N frames (multiple files)
@@ -292,26 +224,38 @@
 # FAST_LIO_MULTI uses the IMU BODY FRAME as the primary reference.
 # This configuration uses LiDAR 1's built-in IMU as the reference frame.
 #
+# UPDATED: Now using precise Mid-360 documentation values for LiDAR-IMU offset
+#
 # 1. IDENTIFY YOUR IMU REFERENCE:
 #    - Built-in IMU from one of the LiDARs (most common for MID-360)
 #    - External IMU (separate sensor)
-#    - This config assumes: LiDAR 1 (192.168.1.10) built-in IMU
+#    - This config uses: LiDAR 1 (192.168.1.10) built-in IMU
 #
 # 2. PRIMARY LIDAR (with IMU) EXTRINSICS:
-#    - If using built-in IMU: extrinsic_T = [0,0,0], extrinsic_R = Identity
-#    - The LiDAR optical center coincides with the IMU center
-#    - No transformation needed
+#    - For Mid-360: Use datasheet values for LiDAR-to-IMU offset
+#    - extrinsic_T = [-0.011, -0.02329, 0.04412] (from Mid-360 documentation)
+#    - extrinsic_R = Identity (LiDAR and IMU share same orientation)
+#    - This accounts for the ~50mm offset between optical center and IMU
 #
 # 3. SECONDARY LIDAR EXTRINSICS:
-#    - Measure position RELATIVE TO PRIMARY LIDAR (not base_link!)
-#    - Translation: [dx, dy, dz] from LiDAR 1 center to LiDAR 2 center
-#    - Rotation: Orientation difference between the two sensors
-#    - Use physical measurements or CAD model
+#    - Must account for BOTH:
+#      a) Physical separation between LiDAR sensors (from Livox config)
+#      b) L1 LiDAR-to-IMU offset (so L2 is relative to L1's IMU, not L1's optical center)
+#    - Computation method:
+#      1. Find L1 IMU position: P_L1_IMU = P_L1_optical + R_L1 * T_lidar_to_IMU
+#      2. Find L2 relative position: P_L2_rel = P_L2_optical - P_L1_IMU
+#      3. Rotate into L1 IMU frame: T_L2_in_IMU = R_L1^T * P_L2_rel
 #
 # 4. COMPUTING FROM BASE_LINK EXTRINSICS:
-#    If you have extrinsics relative to base_link:
-#    - T_L2_to_IMU = T_L2_to_base - T_L1_to_base
-#    - R_L2_to_IMU = R_L2_to_base * R_L1_to_base^T (matrix multiplication)
+#    If you have Livox driver extrinsics relative to base_link:
+#    Step 1: Compute L1 IMU position in base_link frame
+#            P_L1_IMU_base = P_L1_base + R_L1_base * [-0.011, -0.02329, 0.04412]
+#    Step 2: Compute L2 position relative to L1 IMU in base_link frame
+#            P_L2_rel_base = P_L2_base - P_L1_IMU_base
+#    Step 3: Rotate into L1 IMU frame
+#            extrinsic_T2 = R_L1_base^T * P_L2_rel_base
+#    Step 4: Compute relative rotation
+#            extrinsic_R2 = R_L1_base^T * R_L2_base
 #
 # 5. OFFLINE CALIBRATION (Advanced):
 #    - Collect rosbag with both sensors in static environment
@@ -320,10 +264,11 @@
 #    - Update extrinsic_T2 and extrinsic_R2 parameters
 #
 # 6. VALIDATION:
-#    - Visualize both sensor clouds in RViz2
+#    - Visualize both sensor clouds in RViz2 fixed frame: map
 #    - Check alignment at sensor overlap regions
 #    - Verify no ghosting, double walls, or misalignment
 #    - Static scene test: walls should be thin (10-20cm), not thick (50cm+)
+#    - Moving test: Verify map consistency during motion
 #
 ###############################################################################
 
