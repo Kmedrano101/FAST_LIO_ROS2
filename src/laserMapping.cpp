@@ -673,7 +673,7 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
 void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+    pcd_writer.writeBinary(map_file_path, *pcl_wait_save);
 }
 
 template<typename T>
