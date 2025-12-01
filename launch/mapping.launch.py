@@ -23,7 +23,7 @@ def generate_launch_description():
         description='Yaml config file path'
     )
     decalre_config_file_cmd = DeclareLaunchArgument(
-        'config_file', default_value='fastlio.yaml',
+        'config_file', default_value='dual_mid360.yaml',
         description='Config file'
     )
     fast_lio_node = Node(

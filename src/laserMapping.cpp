@@ -81,13 +81,29 @@ bool   traj_save_en = false, async_debug = false;
 /********* MULTI-LIDAR Support ********/
 bool multi_lidar = false;
 string lid_topic[2], imu_topic;    // <-- topic for each lidar
-double last_timestamp_lidar[2] = {0, 0}; // <-- one per lidar
+double last_timestamp_lidar[2] = {0, 0}; // <-- one per lidar (array-based)
 bool is_first_lidar[2] = {true, true};   // <-- one per lidar
 int scan_count[2] = {0, 0};              // <-- one per lidar
 deque<double> time_buffer;               // <-- shared, will mark lidar source per-scan
 deque<PointCloudXYZI::Ptr> lidar_buffer; // <-- shared, will mark lidar source per-scan
 deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
 int current_lidar_num = 1;
+
+// Update method: 0=bundle, 1=async, 2=adaptive
+int update_method = 0;
+
+// Adaptive thresholds
+int voxelized_pt_num_thres = 0;
+double effect_pt_num_ratio_thres = 0.0;
+
+// Adaptive mode control
+bool use_bundle_mode = true;
+int bundle_disabled_tic = 0;
+const int bundle_enabled_tic_thres = 10;
+
+// Storage for visualization (last scans from each LiDAR in world frame)
+PointCloudXYZI::Ptr last_lidar1_world(new PointCloudXYZI());
+PointCloudXYZI::Ptr last_lidar2_world(new PointCloudXYZI());
 /****************************************/
 
 Eigen::Matrix4f tf_m360_child = Eigen::Matrix4f::Identity();
@@ -147,8 +163,10 @@ V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);
 V3D euler_cur;
 V3D position_last(Zero3d);
-V3D Lidar_T_wrt_IMU(Zero3d);
-M3D Lidar_R_wrt_IMU(Eye3d);
+V3D Lidar_T_wrt_IMU_1(Zero3d);
+M3D Lidar_R_wrt_IMU_1(Eye3d);
+V3D Lidar_T_wrt_IMU_2(Zero3d);
+M3D Lidar_R_wrt_IMU_2(Eye3d);
 
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
@@ -301,28 +319,51 @@ void lasermap_fov_segment()
     kdtree_delete_time = omp_get_wtime() - delete_begin;
 }
 
-void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg) 
+void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 {
-    //RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "standard_pcl_cbk started");
     const int lidar_id = 0;
     mtx_buffer.lock();
     scan_count[lidar_id] ++;
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
+
+    // Log data reception for LiDAR 1
+    if (scan_count[lidar_id] % 100 == 1) {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
+                    scan_count[lidar_id], cur_time, msg->width * msg->height);
+    }
+
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
-        std::cerr << "lidar loop back, clear buffer" << std::endl;
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
         lidar_buffer.clear();
     }
     if (is_first_lidar[lidar_id])
     {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] First scan received!");
         is_first_lidar[lidar_id] = false;
     }
 
-    PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
+    // Preprocess point cloud
+    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
-    ptr->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr);
+
+    // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
+    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+    ptr_transformed->resize(ptr->size());
+    for (size_t i = 0; i < ptr->size(); i++)
+    {
+        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
+        V3D point_imu = Lidar_R_wrt_IMU_1 * point_lidar + Lidar_T_wrt_IMU_1;
+        ptr_transformed->points[i].x = point_imu.x();
+        ptr_transformed->points[i].y = point_imu.y();
+        ptr_transformed->points[i].z = point_imu.z();
+        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
+    }
+
+    ptr_transformed->header.seq = lidar_id;
+    lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(cur_time);
     last_timestamp_lidar[lidar_id] = cur_time;
     s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
@@ -332,26 +373,49 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 
 void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 {
-    //RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "standard_pcl_cbk2 started");
     const int lidar_id = 1;
     mtx_buffer.lock();
     scan_count[lidar_id] ++;
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
+
+    // Log data reception for LiDAR 2
+    if (scan_count[lidar_id] % 100 == 1) {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
+                    scan_count[lidar_id], cur_time, msg->width * msg->height);
+    }
+
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
-        std::cerr << "lidar loop back, clear buffer" << std::endl;
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
         lidar_buffer.clear();
     }
     if (is_first_lidar[lidar_id])
     {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] First scan received!");
         is_first_lidar[lidar_id] = false;
     }
 
+    // Preprocess point cloud
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
-    ptr->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr);
+
+    // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
+    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+    ptr_transformed->resize(ptr->size());
+    for (size_t i = 0; i < ptr->size(); i++)
+    {
+        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
+        V3D point_imu = Lidar_R_wrt_IMU_2 * point_lidar + Lidar_T_wrt_IMU_2;
+        ptr_transformed->points[i].x = point_imu.x();
+        ptr_transformed->points[i].y = point_imu.y();
+        ptr_transformed->points[i].z = point_imu.z();
+        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
+    }
+
+    ptr_transformed->header.seq = lidar_id;
+    lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(cur_time);
     last_timestamp_lidar[lidar_id] = cur_time;
     s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
@@ -435,7 +499,7 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
 
 double lidar_mean_scantime = 0.0;
 int    scan_num = 0;
-bool sync_packages(MeasureGroup &meas)
+bool sync_packages_multi(MeasureGroup &meas)
 {
     if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
@@ -444,30 +508,119 @@ bool sync_packages(MeasureGroup &meas)
     /*** push a lidar scan ***/
     if(!lidar_pushed)
     {
-        meas.lidar = lidar_buffer.front();
-        meas.lidar_beg_time = time_buffer.front();
-        //Check data from Lidar 2 (lidar_id=1)and transform it to Lidar 1 frame
-        if (meas.lidar->header.seq == 1)
+        // === MÉTODO BUNDLE ===
+        // Wait for synchronized scans from both LiDARs and merge them
+        if ((update_method == 0 || (update_method == 2 && use_bundle_mode)) && multi_lidar)
         {
-            // LiDAR2: transform to LiDAR1 frame
-            pcl::transformPointCloud(*meas.lidar, *meas.lidar, LiDAR2_wrt_LiDAR1);
-            current_lidar_num = 2;
-            if (async_debug) {
-                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "Second LiDAR!");
+            // Need at least 2 scans in buffer for bundle mode
+            if (lidar_buffer.size() < 2) {
+                return false;
+            }
+
+            // Check if we have scans from both LiDARs
+            int lidar1_idx = -1, lidar2_idx = -1;
+            for (size_t i = 0; i < std::min(lidar_buffer.size(), size_t(5)); i++) {
+                if (lidar_buffer[i]->header.seq == 0 && lidar1_idx == -1) {
+                    lidar1_idx = i;
+                }
+                if (lidar_buffer[i]->header.seq == 1 && lidar2_idx == -1) {
+                    lidar2_idx = i;
+                }
+                if (lidar1_idx != -1 && lidar2_idx != -1) break;
+            }
+
+            // If we don't have both, wait
+            if (lidar1_idx == -1 || lidar2_idx == -1) {
+                return false;
+            }
+
+            // Check temporal synchronization (tolerance: 50ms)
+            double time1 = time_buffer[lidar1_idx];
+            double time2 = time_buffer[lidar2_idx];
+            double dt = fabs(time1 - time2);
+
+            if (dt > 0.05) {
+                // Scans not synchronized, discard the older one
+                RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                           "[BUNDLE] Time desync: %.3f ms, discarding older scan", dt * 1000);
+                if (time1 < time2) {
+                    lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
+                    time_buffer.erase(time_buffer.begin() + lidar1_idx);
+                } else {
+                    lidar_buffer.erase(lidar_buffer.begin() + lidar2_idx);
+                    time_buffer.erase(time_buffer.begin() + lidar2_idx);
+                }
+                return false;
+            }
+
+            // Merge point clouds
+            PointCloudXYZI::Ptr merged(new PointCloudXYZI());
+            PointCloudXYZI::Ptr scan1 = lidar_buffer[lidar1_idx];
+            PointCloudXYZI::Ptr scan2 = lidar_buffer[lidar2_idx];
+
+            // Transform LiDAR 2 to LiDAR 1 frame before merging
+            PointCloudXYZI::Ptr scan2_transformed(new PointCloudXYZI());
+            pcl::transformPointCloud(*scan2, *scan2_transformed, LiDAR2_wrt_LiDAR1);
+
+            // Merge
+            *merged = *scan1;
+            *merged += *scan2_transformed;
+
+            meas.lidar = merged;
+            meas.lidar_beg_time = std::min(time1, time2);
+            current_lidar_num = 0; // Indicate merged scan
+
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                       "[BUNDLE] Merged scans: L1=%zu pts, L2=%zu pts, Total=%zu pts",
+                       scan1->size(), scan2->size(), merged->size());
+
+            // Remove both scans from buffer (remove higher index first)
+            if (lidar1_idx > lidar2_idx) {
+                lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
+                time_buffer.erase(time_buffer.begin() + lidar1_idx);
+                lidar_buffer.erase(lidar_buffer.begin() + lidar2_idx);
+                time_buffer.erase(time_buffer.begin() + lidar2_idx);
+            } else {
+                lidar_buffer.erase(lidar_buffer.begin() + lidar2_idx);
+                time_buffer.erase(time_buffer.begin() + lidar2_idx);
+                lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
+                time_buffer.erase(time_buffer.begin() + lidar1_idx);
             }
         }
+        // === MÉTODO ASYNC ===
+        // Use whichever LiDAR scan is available first
         else
         {
-            current_lidar_num = 1;
-            if (async_debug) {
-                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "First LiDAR!");
+            meas.lidar = lidar_buffer.front();
+            meas.lidar_beg_time = time_buffer.front();
+
+            // Check data from Lidar 2 (lidar_id=1) and transform it to Lidar 1 frame
+            if (meas.lidar->header.seq == 1)
+            {
+                // LiDAR2: transform to LiDAR1 frame
+                pcl::transformPointCloud(*meas.lidar, *meas.lidar, LiDAR2_wrt_LiDAR1);
+                current_lidar_num = 2;
+                if (async_debug) {
+                    RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[ASYNC] Using LiDAR 2 scan");
+                }
             }
+            else
+            {
+                current_lidar_num = 1;
+                if (async_debug) {
+                    RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[ASYNC] Using LiDAR 1 scan");
+                }
+            }
+
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
         }
 
+        // Calculate lidar end time
         if (meas.lidar->points.size() <= 1) // time too little
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "Too few input point cloud!");
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "Too few input point cloud!");
         }
         else if (meas.lidar->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime)
         {
@@ -500,10 +653,53 @@ bool sync_packages(MeasureGroup &meas)
         imu_buffer.pop_front();
     }
 
-    lidar_buffer.pop_front();
-    time_buffer.pop_front();
     lidar_pushed = false;
     return true;
+}
+
+// Adaptive mode: Dynamically switch between BUNDLE and ASYNC based on point quality
+void check_adaptive_mode(const PointCloudXYZI::Ptr& cloud, int effect_feat_num)
+{
+    if (update_method != 2) return;  // Only for adaptive mode
+
+    int voxelized_num = cloud->size();
+
+    // Avoid division by zero
+    if (voxelized_num == 0) {
+        return;
+    }
+
+    double effect_ratio = (double)effect_feat_num / voxelized_num;
+
+    // If there are enough effective points, use ASYNC mode (faster)
+    if (voxelized_num >= voxelized_pt_num_thres &&
+        effect_ratio >= effect_pt_num_ratio_thres)
+    {
+        if (use_bundle_mode) {
+            bundle_disabled_tic = 0;
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                       "[ADAPTIVE] Switching to ASYNC mode (voxelized=%d, effect=%d, ratio=%.2f%%)",
+                       voxelized_num, effect_feat_num, effect_ratio * 100);
+        }
+        use_bundle_mode = false;
+    }
+    // If lacking effective points, use BUNDLE mode (more data)
+    else
+    {
+        if (!use_bundle_mode) {
+            bundle_disabled_tic++;
+            if (bundle_disabled_tic >= bundle_enabled_tic_thres) {
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                           "[ADAPTIVE] Switching to BUNDLE mode (voxelized=%d, effect=%d, ratio=%.2f%%, tic=%d)",
+                           voxelized_num, effect_feat_num, effect_ratio * 100, bundle_disabled_tic);
+                use_bundle_mode = true;
+            }
+        }
+        else {
+            // Already in bundle mode, keep it
+            bundle_disabled_tic = 0;
+        }
+    }
 }
 
 int process_increments = 0;
@@ -674,6 +870,30 @@ void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
     pcd_writer.writeBinary(map_file_path, *pcl_wait_save);
+}
+
+// Publish LiDAR 1 colored (Green)
+void publish_lidar1_colored(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub)
+{
+    if (last_lidar1_world->empty()) return;
+
+    sensor_msgs::msg::PointCloud2 cloud_msg;
+    pcl::toROSMsg(*last_lidar1_world, cloud_msg);
+    cloud_msg.header.stamp = get_ros_time(lidar_end_time);
+    cloud_msg.header.frame_id = "camera_init";
+    pub->publish(cloud_msg);
+}
+
+// Publish LiDAR 2 colored (Red)
+void publish_lidar2_colored(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub)
+{
+    if (last_lidar2_world->empty()) return;
+
+    sensor_msgs::msg::PointCloud2 cloud_msg;
+    pcl::toROSMsg(*last_lidar2_world, cloud_msg);
+    cloud_msg.header.stamp = get_ros_time(lidar_end_time);
+    cloud_msg.header.frame_id = "camera_init";
+    pub->publish(cloud_msg);
 }
 
 template<typename T>
@@ -943,6 +1163,9 @@ public:
         this->get_parameter_or<int>("max_iteration", NUM_MAX_ITERATIONS, 4);
         this->get_parameter_or<string>("map_file_path", map_file_path, string(ROOT_DIR) + "PCD/map.pcd");
         this->get_parameter_or<bool>("multi_lidar", multi_lidar, false);
+        this->get_parameter_or<int>("update_method", update_method, 1);
+        this->get_parameter_or<int>("voxelized_pt_num_thres", voxelized_pt_num_thres, 100);
+        this->get_parameter_or<double>("effect_pt_num_ratio_thres", effect_pt_num_ratio_thres, 0.5);
         this->get_parameter_or<string>("common.lid_topic", lid_topic[LIDAR1], "/livox/lidar");
         this->get_parameter_or<string>("common.lid_topic2", lid_topic[LIDAR2], "/livox/lidar2");
         this->get_parameter_or<string>("common.imu_topic", imu_topic,"/livox/imu");
@@ -975,10 +1198,10 @@ public:
         this->get_parameter_or<bool>("pcd_save.pcd_save_en", pcd_save_en, false);
         this->get_parameter_or<string>("pcd_save.pcd_file_name", pcd_file_name, "pointclouds.pcd");
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, -1);
-        this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
-        this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
-        this->get_parameter_or<vector<double>>("mapping.extrinsic_T2", extrinT2, vector<double>());
-        this->get_parameter_or<vector<double>>("mapping.extrinsic_R2", extrinR2, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_T_1", extrinT, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_R_1", extrinR, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_T_2", extrinT2, vector<double>());
+        this->get_parameter_or<vector<double>>("mapping.extrinsic_R_2", extrinR2, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T_L2_wrt_L1", extrinT3, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R_L2_wrt_L1", extrinR3, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T_L1_wrt_drone", extrinT4, vector<double>());
@@ -988,6 +1211,16 @@ public:
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 2: %d", p_pre->lidar_type[LIDAR2]);
+
+        // Log update method
+        const char* method_names[] = {"BUNDLE", "ASYNC", "ADAPTIVE"};
+        if (update_method >= 0 && update_method <= 2) {
+            RCLCPP_INFO(this->get_logger(), "Update method: %d (%s)", update_method, method_names[update_method]);
+            if (update_method == 2) {
+                RCLCPP_INFO(this->get_logger(), "Adaptive thresholds: voxelized_pts >= %d, effect_ratio >= %.2f",
+                           voxelized_pt_num_thres, effect_pt_num_ratio_thres);
+            }
+        }
 
         path.header.stamp = this->get_clock()->now();
         path.header.frame_id ="camera_init";
@@ -1004,9 +1237,16 @@ public:
         memset(point_selected_surf, true, sizeof(point_selected_surf));
         memset(res_last, -1000.0f, sizeof(res_last));
 
-        Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
-        Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
-        p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
+        // Load extrinsics for LiDAR 1
+        Lidar_T_wrt_IMU_1<<VEC_FROM_ARRAY(extrinT);
+        Lidar_R_wrt_IMU_1<<MAT_FROM_ARRAY(extrinR);
+
+        // Load extrinsics for LiDAR 2
+        Lidar_T_wrt_IMU_2<<VEC_FROM_ARRAY(extrinT2);
+        Lidar_R_wrt_IMU_2<<MAT_FROM_ARRAY(extrinR2);
+
+        // Set extrinsics for primary LiDAR (LiDAR 1) in IMU processor
+        p_imu->set_extrinsic(Lidar_T_wrt_IMU_1, Lidar_R_wrt_IMU_1);
         p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
         p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
         p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
@@ -1097,6 +1337,9 @@ public:
         pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", 20);
         pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 20);
         pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 20);
+        // Publishers for dual LiDAR visualization
+        pubLidar1_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar1_colored", 20);
+        pubLidar2_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar2_colored", 20);
         pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
         pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -1124,7 +1367,7 @@ private:
     //*** main functions ***//
     void timer_callback()
     {
-        if(sync_packages(Measures))
+        if(sync_packages_multi(Measures))
         {
             if (flg_first_scan)
             {
@@ -1226,6 +1469,9 @@ private:
 
             double t_update_end = omp_get_wtime();
 
+            /*** Check adaptive mode and switch if needed ***/
+            check_adaptive_mode(feats_down_body, effct_feat_num);
+
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped_, tf_broadcaster_);
 
@@ -1238,6 +1484,23 @@ private:
             if (path_en)                         publish_path(pubPath_);
             if (scan_pub_en)      publish_frame_world(pubLaserCloudFull_);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body_);
+
+            // Store separate LiDAR clouds for visualization
+            if (multi_lidar && scan_pub_en) {
+                if (current_lidar_num == 1) {
+                    *last_lidar1_world = *feats_down_world;
+                    last_lidar2_world->clear();
+                } else if (current_lidar_num == 2) {
+                    *last_lidar2_world = *feats_down_world;
+                    last_lidar1_world->clear();
+                } else if (current_lidar_num == 0) {
+                    // Bundle mode: both clouds are merged, can't separate
+                    last_lidar1_world->clear();
+                    last_lidar2_world->clear();
+                }
+                publish_lidar1_colored(pubLidar1_colored_);
+                publish_lidar2_colored(pubLidar2_colored_);
+            }
 
             /*** Debug variables ***/
             if (runtime_pos_log)
@@ -1297,6 +1560,8 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLidar1_colored_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLidar2_colored_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;

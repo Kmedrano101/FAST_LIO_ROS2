@@ -34,6 +34,13 @@
     # ==========================================================================
     multi_lidar: true                        # CRITICAL: Enable dual LiDAR processing
 
+    # Update method: 0=BUNDLE (always merge), 1=ASYNC (always separate), 2=ADAPTIVE (auto-switch)
+    update_method: 1                         # Default: ASYNC mode for maximum update rate
+
+    # Adaptive mode thresholds (only used when update_method=2)
+    voxelized_pt_num_thres: 100              # Min downsampled points to use ASYNC
+    effect_pt_num_ratio_thres: 0.5           # Min ratio of effective points (0.0-1.0)
+
     # ==========================================================================
     # COMMON SETTINGS
     # ==========================================================================
