@@ -1,0 +1,157 @@
+###############################################################################
+# FAST-LIO SDK Fusion Configuration
+# Target: Dual Livox MID-360 with SDK-level Fusion for Underground Mine Navigation
+# Hardware: NVIDIA Jetson ORIN + 2x MID-360
+# ROS2: Humble/Iron
+# Fusion Mode: Livox SDK (single fused point cloud + single IMU)
+###############################################################################
+#
+# IMPORTANT: This configuration assumes:
+# 1. livox_ros_driver2 is configured with multi_topic: 0 (SDK fusion enabled)
+# 2. The driver uses multiple_netconfigs.json with extrinsics relative to base_link
+# 3. The driver publishes fused point cloud to /livox/lidar
+# 4. The driver publishes IMU data to /livox/imu (from primary LiDAR 192.168.1.10)
+#
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # FAST-LIO CORE PARAMETERS
+    # ==========================================================================
+    feature_extract_enable: false        # Use all points (no feature extraction)
+    point_filter_num: 2                  # Downsampling: keep every Nth point, 2 = 50% reduction
+    max_iteration: 4                     # Max iterations for ICP optimization, 3-4 is good balance
+    filter_size_surf: 0.3                # Voxel size (m) for surface downsampling
+    filter_size_map: 0.4                 # Voxel size (m) for map downsampling
+    cube_side_length: 200.0              # Local map cube size (meters)
+    runtime_pos_log_enable: false        # Log position during runtime (debugging)
+
+    map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/mine_sdk_fusion.pcd"
+
+    # ==========================================================================
+    # MULTI-LIDAR CONFIGURATION
+    # ==========================================================================
+    multi_lidar: true                        # CRITICAL: Enable dual LiDAR processing
+
+    # ==========================================================================
+    # COMMON SETTINGS
+    # ==========================================================================
+    common:
+      # --- Topic Configuration ---
+      # CRITICAL: These must match your livox_ros_driver2 output topics
+      # Set multi_topic: 1 in livox_params.yaml to get separate topics
+      lid_topic:  "/livox/lidar_192_168_1_10"   # Front MID-360 (IP: 192.168.1.10)
+      lid_topic2: "/livox/lidar_192_168_1_18"   # Rear MID-360 (IP: 192.168.1.18)
+      # IMU topic (shared from primary sensor or external IMU)
+      imu_topic:  "/livox/imu_192_168_1_10"     # Primary MID-360 IMU
+      # --- Time Synchronization ---
+      time_sync_en: false                # Use hardware timestamps from sensors
+      time_offset_lidar_to_imu: 0.0      # Time offset (seconds) between LiDAR and IMU
+                                         # For MID-360 built-in IMU: typically 0.0
+
+    # ==========================================================================
+    # PREPROCESSING PARAMETERS
+    # ==========================================================================
+    preprocess:
+      # --- PRIMARY LIDAR (LiDAR 1) ---
+      lidar_type: 4                      # 1=AVIA, 2=Velodyne, 3=Ouster, 4=MID360, 5=Gazebo
+      scan_line: 4                       # MID-360 has 4 scan lines
+      blind: 0.3                         # Ignore points closer than 0.3m, Increase to 0.5m if heavy dust
+      scan_rate: 10                      # LiDAR scan rate (Hz), MID-360 supports 10Hz
+      timestamp_unit: 3                  # 0=sec, 1=ms, 2=μs, 3=ns, MID-360 uses nanoseconds
+      point_filter_num: 2                # Downsample: keep 1 in every 2 points
+
+      # --- SECONDARY LIDAR (LiDAR 2) ---
+      lidar_type2: 4                     # MID-360 (same as primary)
+      scan_line2: 4
+      blind2: 0.3                        # Match primary sensor
+      scan_rate2: 10                     # Must match primary for synchronization
+      timestamp_unit2: 3                 # Nanosecond timestamps
+      point_filter_num2: 2               # Match primary downsampling
+
+    # ==========================================================================
+    # MAPPING & SENSOR FUSION PARAMETERS
+    # ==========================================================================
+    mapping:
+      # --- IMU Noise Model ---
+      # Underground mines have high vibration from rough terrain
+      # Increase covariance values to handle vibration noise
+      acc_cov: 0.5                       # Accelerometer noise covariance
+      gyr_cov: 0.5                       # Gyroscope noise covariance
+      b_acc_cov: 0.0001                  # Accelerometer bias covariance
+      b_gyr_cov: 0.0001                  # Gyroscope bias covariance
+
+      # --- Field of View & Detection Range ---
+      fov_degree: 360.0                  # Total FOV with SDK-fused dual sensors
+      det_range: 40.0                    # Maximum detection range (meters)
+
+      # --- Extrinsic Calibration ---
+      extrinsic_est_en: false            # Disable online estimation
+                                         # Use calibrated values from Livox SDK config
+
+      # LiDAR 1 (Front MID-360, IP: 192.168.1.10) Extrinsics
+      extrinsic_T_1: [-0.011, 0.02329, -0.15412]  # [x, y, z] meters
+      #   Translation from LiDAR 1 to IMU frame
+      #   x = -0.011m:   11mm offset
+      #   y =  0.02329m: 23.29mm offset
+      #   z = -0.15412m: 154.12mm offset (includes 110mm base separation)
+
+      # Rotation from LiDAR 1 to IMU frame
+      # L1 is rotated 90° roll and 180° yaw relative to base_link
+      # R_L1_to_imu = R_L1^T (transpose/inverse of L1's rotation)
+      extrinsic_R_1: [-1.00000,  0.00000,  0.00000,
+                       0.00000, -1.00000,  0.00000,
+                       0.00000,  0.00000,  1.00000]
+
+      # LiDAR 2 (Rear MID-360, IP: 192.168.1.18) Extrinsics
+      extrinsic_T_2: [-0.011, -0.02329, -0.15412]  # [x, y, z] meters
+      #   Translation from LiDAR 2 to IMU frame
+      #   x = -0.011m:   11mm offset
+      #   y = -0.02329m: -23.29mm offset (opposite side)
+      #   z = -0.15412m: 154.12mm offset (same height as L1)
+
+      # Rotation from LiDAR 2 to IMU frame
+      # L2 has same orientation as L1 (back-to-back configuration)
+      extrinsic_R_2: [-1.00000,  0.00000,  0.00000,
+                       0.00000, -1.00000,  0.00000,
+                       0.00000,  0.00000,  1.00000]
+
+      # Relative transformation from LiDAR 2 to LiDAR 1
+      # Translation: L2 is offset in Y direction from L1
+      extrinsic_T_L2_wrt_L1: [0.0, -0.04658, 0.0]  # [x, y, z] meters
+      #   x = 0.0:      No offset in X (same longitudinal position)
+      #   y = -0.04658: 46.58mm offset in -Y (L2 is on opposite side)
+      #   z = 0.0:      No offset in Z (same height)
+
+      # Rotation: L2 has same orientation as L1
+      extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,
+                               0.0, 1.0, 0.0,
+                               0.0, 0.0, 1.0]
+
+      # Optional: LiDAR 1 to drone/robot base transformation
+      # Set to identity if not using drone-specific frame
+      extrinsic_T_L1_wrt_drone: [0.0, 0.0, 0.0]  # [x, y, z] meters
+      extrinsic_R_L1_wrt_drone: [1.0, 0.0, 0.0,
+                                  0.0, 1.0, 0.0,
+                                  0.0, 0.0, 1.0]
+
+    # ==========================================================================
+    # PUBLISHING OPTIONS
+    # ==========================================================================
+    publish:
+      path_en: true                      # Publish odometry path (/path topic)
+      effect_map_en: false               # Disable to reduce computational load
+      map_en: true                       # Publish global map (/cloud_registered)
+      scan_publish_en: true              # Publish current scan
+      dense_publish_en: false            # Disable dense cloud to save bandwidth
+      scan_bodyframe_pub_en: true        # Publish scan in body frame
+
+    # ==========================================================================
+    # PCD MAP SAVING
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: true                     # Save final map to PCD file
+      pcd_file_name: "mine_map_fusion.pcd"  # Output filename
+      interval: -1                          # -1: Save all frames at end (single file)
+                                            # >0: Save every N frames (multiple files)
