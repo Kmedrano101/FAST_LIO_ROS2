@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ros2 launch fast_lio_ros2 dual_mapping_desktop.launch.py
-#   ros2 launch fast_lio_ros2 dual_mapping_desktop.launch.py rviz_cfg:=dual_lidar_test.rviz
+#   ros2 launch fast_lio_ros2 dual_mapping_desktop.launch.py rviz_cfg:=fastlio.rviz
 #
 # This launch file only provides visualization tools (RViz).
 # The FAST-LIO core must be running on the robot/Jetson.
@@ -29,7 +29,7 @@ def generate_launch_description():
     # PATH CONFIGURATION
     # ==========================================================================
     package_path = get_package_share_directory('fast_lio_ros2')
-    default_rviz_config_path = os.path.join(package_path, 'rviz', 'dual_lidar_test.rviz')
+    default_rviz_config_path = os.path.join(package_path, 'rviz', 'fastlio.rviz')
 
     # ==========================================================================
     # LAUNCH ARGUMENTS
@@ -50,7 +50,7 @@ def generate_launch_description():
     declare_rviz_config_path_cmd = DeclareLaunchArgument(
         'rviz_cfg',
         default_value=default_rviz_config_path,
-        description='RViz configuration file path (default: dual_lidar_test.rviz)'
+        description='RViz configuration file path (default: fastlio.rviz with dual LiDAR support)'
     )
 
     # ==========================================================================
