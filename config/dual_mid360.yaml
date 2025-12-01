@@ -98,50 +98,49 @@
                                          # Use calibrated values from Livox SDK config
 
       # LiDAR 1 (Front MID-360, IP: 192.168.1.10) Extrinsics
-      extrinsic_T_1: [-0.011, 0.02329, -0.15412]  # [x, y, z] meters
-      #   Translation from LiDAR 1 to IMU frame
-      #   x = -0.011m:   11mm offset
-      #   y =  0.02329m: 23.29mm offset
-      #   z = -0.15412m: 154.12mm offset (includes 110mm base separation)
-
-      # Rotation from LiDAR 1 to IMU frame
-      # L1 is rotated 90° roll and 180° yaw relative to base_link
-      # R_L1_to_imu = R_L1^T (transpose/inverse of L1's rotation)
-      extrinsic_R_1: [-1.00000,  0.00000,  0.00000,
-                       0.00000, -1.00000,  0.00000,
-                       0.00000,  0.00000,  1.00000]
-
+      extrinsic_T_1: [0.011, -0.06588, -0.02329]  # [x, y, z] meters
+      #   Transformación base_link → frame IMU
+      #   Cálculo:
+      #     P_imu_nativo = [0.011, 0.02329, -0.04412] m (del datasheet MID-360)
+      #     R1 = Rz(180°) × Rx(90°) (rotación del driver)
+      #     P_imu_rotado = R1 × P_imu_nativo = [-0.011, -0.04412, 0.02329]
+      #     P_imu_base = P_imu_rotado + [0, 0.110, 0] = [-0.011, 0.06588, 0.02329]
+      #     extrinsic_T = -P_imu_base = [0.011, -0.06588, -0.02329]
+      
+      # Rotación base_link → frame IMU
+      # Identidad porque imu_transformer ya alineó el IMU con base_link
+      extrinsic_R_1: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+      
       # LiDAR 2 (Rear MID-360, IP: 192.168.1.18) Extrinsics
-      extrinsic_T_2: [-0.011, -0.02329, -0.15412]  # [x, y, z] meters
-      #   Translation from LiDAR 2 to IMU frame
-      #   x = -0.011m:   11mm offset
-      #   y = -0.02329m: -23.29mm offset (opposite side)
-      #   z = -0.15412m: 154.12mm offset (same height as L1)
-
-      # Rotation from LiDAR 2 to IMU frame
-      # L2 has same orientation as L1 (back-to-back configuration)
-      extrinsic_R_2: [-1.00000,  0.00000,  0.00000,
-                       0.00000, -1.00000,  0.00000,
-                       0.00000,  0.00000,  1.00000]
-
-      # Relative transformation from LiDAR 2 to LiDAR 1
-      # Translation: L2 is offset in Y direction from L1
-      extrinsic_T_L2_wrt_L1: [0.0, -0.04658, 0.0]  # [x, y, z] meters
-      #   x = 0.0:      No offset in X (same longitudinal position)
-      #   y = -0.04658: 46.58mm offset in -Y (L2 is on opposite side)
-      #   z = 0.0:      No offset in Z (same height)
-
-      # Rotation: L2 has same orientation as L1
+      extrinsic_T_2: [0.011, -0.06588, -0.02329]  # [x, y, z] meters
+      #   IGUAL que T_1 porque:
+      #   - El driver ya transformó los puntos de L2 a base_link
+      #   - La transformación base_link → IMU es única e independiente del LiDAR origen
+      
+      # Rotación base_link → frame IMU (identidad, igual que R_1)
+      extrinsic_R_2: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+      
+      # Relative transformation from LiDAR 2 to LiDAR 1 (en base_link)
+      extrinsic_T_L2_wrt_L1: [0.0, -0.220, 0.0]  # [x, y, z] meters
+      #   x = 0.0:    Mismo plano longitudinal
+      #   y = -0.220: 220mm separación (L1 en +110mm, L2 en -110mm)
+      #   z = 0.0:    Misma altura
+      
+      # Rotación L2 respecto a L1 (identidad en base_link, driver ya compensó yaw)
       extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,
-                               0.0, 1.0, 0.0,
-                               0.0, 0.0, 1.0]
-
-      # Optional: LiDAR 1 to drone/robot base transformation
-      # Set to identity if not using drone-specific frame
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+      
+      # LiDAR 1 to drone/robot base transformation
+      # Identidad si base_link coincide con el frame del drone
       extrinsic_T_L1_wrt_drone: [0.0, 0.0, 0.0]  # [x, y, z] meters
       extrinsic_R_L1_wrt_drone: [1.0, 0.0, 0.0,
-                                  0.0, 1.0, 0.0,
-                                  0.0, 0.0, 1.0]
+                                 0.0, 1.0, 0.0,
+                                 0.0, 0.0, 1.0]
 
     # ==========================================================================
     # PUBLISHING OPTIONS

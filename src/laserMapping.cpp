@@ -426,24 +426,33 @@ void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
 #ifdef USE_LIVOX_DRIVER2
-void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg) 
+void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 {
     const int lidar_id = 0;
     mtx_buffer.lock();
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
     scan_count[lidar_id] ++;
+
+    // Log data reception for LiDAR 1
+    if (scan_count[lidar_id] % 100 == 1) {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
+                    scan_count[lidar_id], cur_time);
+    }
+
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
-        std::cerr << "lidar loop back, clear buffer" << std::endl;
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
         lidar_buffer.clear();
     }
     if(is_first_lidar[lidar_id])
     {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1 Livox] First scan received!");
         is_first_lidar[lidar_id] = false;
     }
     last_timestamp_lidar[lidar_id] = cur_time;
-    
+
     if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
     {
         printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
@@ -456,11 +465,85 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
         printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
     }
 
-    PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
+    // Preprocess point cloud
+    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
-    lidar_buffer.push_back(ptr);
+
+    // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
+    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+    ptr_transformed->resize(ptr->size());
+    for (size_t i = 0; i < ptr->size(); i++)
+    {
+        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
+        V3D point_imu = Lidar_R_wrt_IMU_1 * point_lidar + Lidar_T_wrt_IMU_1;
+        ptr_transformed->points[i].x = point_imu.x();
+        ptr_transformed->points[i].y = point_imu.y();
+        ptr_transformed->points[i].z = point_imu.z();
+        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
+    }
+
+    ptr_transformed->header.seq = lidar_id;
+    lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(last_timestamp_lidar[lidar_id]);
-    
+
+    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    mtx_buffer.unlock();
+    sig_buffer.notify_all();
+}
+
+void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
+{
+    const int lidar_id = 1;
+    mtx_buffer.lock();
+    double cur_time = get_time_sec(msg->header.stamp);
+    double preprocess_start_time = omp_get_wtime();
+    scan_count[lidar_id] ++;
+
+    // Log data reception for LiDAR 2
+    if (scan_count[lidar_id] % 100 == 1) {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
+                    scan_count[lidar_id], cur_time);
+    }
+
+    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+    {
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
+        lidar_buffer.clear();
+    }
+    if(is_first_lidar[lidar_id])
+    {
+        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2 Livox] First scan received!");
+        is_first_lidar[lidar_id] = false;
+    }
+    last_timestamp_lidar[lidar_id] = cur_time;
+
+    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+    {
+        printf("IMU and LiDAR 2 not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+    }
+
+    // Preprocess point cloud
+    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+    p_pre->process(msg, ptr, lidar_id);
+
+    // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
+    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+    ptr_transformed->resize(ptr->size());
+    for (size_t i = 0; i < ptr->size(); i++)
+    {
+        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
+        V3D point_imu = Lidar_R_wrt_IMU_2 * point_lidar + Lidar_T_wrt_IMU_2;
+        ptr_transformed->points[i].x = point_imu.x();
+        ptr_transformed->points[i].y = point_imu.y();
+        ptr_transformed->points[i].z = point_imu.z();
+        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
+    }
+
+    ptr_transformed->header.seq = lidar_id;
+    lidar_buffer.push_back(ptr_transformed);
+    time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
     s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
@@ -1115,6 +1198,9 @@ public:
         this->declare_parameter<int>("max_iteration", 4);
         this->declare_parameter<string>("map_file_path", string(ROOT_DIR) + "PCD/map.pcd");
         this->declare_parameter<bool>("multi_lidar", false);
+        this->declare_parameter<int>("update_method", 1);
+        this->declare_parameter<int>("voxelized_pt_num_thres", 100);
+        this->declare_parameter<double>("effect_pt_num_ratio_thres", 0.5);
         this->declare_parameter<string>("common.lid_topic", "/livox/lidar");
         this->declare_parameter<string>("common.lid_topic2", "/livox/lidar2");
         this->declare_parameter<string>("common.imu_topic", "/livox/imu");
@@ -1131,11 +1217,15 @@ public:
         this->declare_parameter<double>("mapping.b_gyr_cov", 0.0001);
         this->declare_parameter<double>("mapping.b_acc_cov", 0.0001);
         this->declare_parameter<double>("preprocess.blind", 0.01);
+        this->declare_parameter<double>("preprocess.blind2", 0.01);
         this->declare_parameter<int>("preprocess.lidar_type", MID360);
         this->declare_parameter<int>("preprocess.lidar_type2", MID360);
         this->declare_parameter<int>("preprocess.scan_line", 16);
+        this->declare_parameter<int>("preprocess.scan_line2", 16);
         this->declare_parameter<int>("preprocess.timestamp_unit", US);
+        this->declare_parameter<int>("preprocess.timestamp_unit2", US);
         this->declare_parameter<int>("preprocess.scan_rate", 10);
+        this->declare_parameter<int>("preprocess.scan_rate2", 10);
         this->declare_parameter<int>("preprocess.point_filter_num", 2);
         this->declare_parameter<int>("preprocess.point_filter_num2", 2);
         this->declare_parameter<bool>("feature_extract_enable", false);
@@ -1144,10 +1234,10 @@ public:
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
         this->declare_parameter<string>("pcd_save.pcd_file_name", "pointclouds.pcd");
         this->declare_parameter<int>("pcd_save.interval", -1);
-        this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
-        this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
-        this->declare_parameter<vector<double>>("mapping.extrinsic_T2", vector<double>());
-        this->declare_parameter<vector<double>>("mapping.extrinsic_R2", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_T_1", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_R_1", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_T_2", vector<double>());
+        this->declare_parameter<vector<double>>("mapping.extrinsic_R_2", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_T_L2_wrt_L1", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R_L2_wrt_L1", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_T_L1_wrt_drone", vector<double>());
@@ -1273,9 +1363,9 @@ public:
         if (!multi_lidar)
         {
             // Single lidar setup
-            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            if (p_pre->lidar_type[LIDAR1] == AVIA || p_pre->lidar_type[LIDAR1] == MID360)
             {
-                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livoxdriver2 type.");
+                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livox CustomMsg type.");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR1], 20, livox_pcl_cbk);
@@ -1297,10 +1387,14 @@ public:
             M3D Lidar2_R_wrt_LiDAR1; Lidar2_R_wrt_LiDAR1<<MAT_FROM_ARRAY(extrinR3);
             LiDAR2_wrt_LiDAR1.block<3,3>(0,0) = Lidar2_R_wrt_LiDAR1;
             LiDAR2_wrt_LiDAR1.block<3,1>(0,3) = LiDAR2_T_wrt_LiDAR1;
+
+            RCLCPP_INFO(this->get_logger(), "Using Dual LiDAR setup");
+
             // Multi-lidar setup
             // --- Lidar 1 ---
-            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            if (p_pre->lidar_type[LIDAR1] == AVIA || p_pre->lidar_type[LIDAR1] == MID360)
             {
+                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using Livox CustomMsg format");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR1], 20, livox_pcl_cbk);
@@ -1311,16 +1405,18 @@ public:
             }
             else
             {
+                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using PointCloud2 format");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR1], 20, standard_pcl_cbk);
             }
 
             // --- Lidar 2 ---
-            if (p_pre->lidar_type[LIDAR2] == AVIA)
+            if (p_pre->lidar_type[LIDAR2] == AVIA || p_pre->lidar_type[LIDAR2] == MID360)
             {
+                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using Livox CustomMsg format");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox2_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-                    lid_topic[LIDAR2], 20, livox_pcl_cbk);
+                    lid_topic[LIDAR2], 20, livox_pcl_cbk2);
 #else
                 RCLCPP_WARN(this->get_logger(),
                             "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type2 to a supported type.");
@@ -1328,6 +1424,7 @@ public:
             }
             else
             {
+                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using PointCloud2 format");
                 sub_pcl_pc2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR2], 20, standard_pcl_cbk2);
             }
@@ -1409,7 +1506,11 @@ private:
             /*** initialize the map kdtree ***/
             if(ikdtree.Root_Node == nullptr)
             {
-                RCLCPP_INFO(this->get_logger(), "Initialize the map kdtree");
+                static bool init_msg_logged = false;
+                if (!init_msg_logged) {
+                    RCLCPP_INFO(this->get_logger(), "Initialize the map kdtree");
+                    init_msg_logged = true;
+                }
                 if(feats_down_size > 5)
                 {
                     ikdtree.set_downsample_param(filter_size_map_min);
@@ -1488,18 +1589,19 @@ private:
             // Store separate LiDAR clouds for visualization
             if (multi_lidar && scan_pub_en) {
                 if (current_lidar_num == 1) {
+                    // Update LiDAR 1 cloud (keep last L2 cloud for visualization)
                     *last_lidar1_world = *feats_down_world;
-                    last_lidar2_world->clear();
+                    publish_lidar1_colored(pubLidar1_colored_);
                 } else if (current_lidar_num == 2) {
+                    // Update LiDAR 2 cloud (keep last L1 cloud for visualization)
                     *last_lidar2_world = *feats_down_world;
-                    last_lidar1_world->clear();
+                    publish_lidar2_colored(pubLidar2_colored_);
                 } else if (current_lidar_num == 0) {
                     // Bundle mode: both clouds are merged, can't separate
+                    // Clear both to avoid showing stale individual data
                     last_lidar1_world->clear();
                     last_lidar2_world->clear();
                 }
-                publish_lidar1_colored(pubLidar1_colored_);
-                publish_lidar2_colored(pubLidar2_colored_);
             }
 
             /*** Debug variables ***/
