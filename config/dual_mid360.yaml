@@ -32,7 +32,7 @@
     # ==========================================================================
     # MULTI-LIDAR CONFIGURATION
     # ==========================================================================
-    multi_lidar: false                        # CRITICAL: Enable dual LiDAR processing
+    multi_lidar: true                        # CRITICAL: Enable dual LiDAR processing
 
     # Update method: 0=BUNDLE (always merge), 1=ASYNC (always separate), 2=ADAPTIVE (auto-switch)
     update_method: 0                         # Default: ASYNC mode for maximum update rate
@@ -51,7 +51,7 @@
       lid_topic:  "/livox/lidar_192_168_1_10"   # Front MID-360 (IP: 192.168.1.10)
       lid_topic2: "/livox/lidar_192_168_1_18"   # Rear MID-360 (IP: 192.168.1.18)
       # IMU topic (shared from primary sensor or external IMU)
-      imu_topic:  "/livox/imu_transformed"     # Primary MID-360 IMU
+      imu_topic:  "/livox/imu_192_168_1_10"     # Primary MID-360 IMU, use transformed IMU: /livox/imu_transformed
       #imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU
       # --- Time Synchronization ---
       time_sync_en: false                # Use hardware timestamps from sensors
@@ -99,7 +99,7 @@
                                          # Use calibrated values from Livox SDK config
 
       # LiDAR 1 (Front MID-360, IP: 192.168.1.10) Extrinsics
-      extrinsic_T_1: [0.011, 0.02329, -0.04412]  # [x, y, z] meters (test Imu nativo)
+      extrinsic_T_1: [0.011, -0.06588, -0.02329]  # [x, y, z] meters (test Imu nativo)
       #   Transformación base_link → frame IMU
       #   Cálculo:
       #     P_imu_nativo = [0.011, 0.02329, -0.04412] m (del datasheet MID-360)
