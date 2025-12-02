@@ -56,11 +56,15 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
     {
         lidar_beg_time = 0.0;
         this->lidar.reset(new PointCloudXYZI());
+        bundle_lidar1_idx = -1;
+        bundle_lidar2_idx = -1;
     };
     double lidar_beg_time;
     double lidar_end_time;
     PointCloudXYZI::Ptr lidar;
     deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
+    int bundle_lidar1_idx;  // Index for bundle mode cleanup (-1 for async mode)
+    int bundle_lidar2_idx;  // Index for bundle mode cleanup (-1 for async mode)
 };
 
 struct StatesGroup

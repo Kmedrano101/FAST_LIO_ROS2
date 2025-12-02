@@ -321,7 +321,7 @@ ros2 topic hz /livox/lidar_192_168_1_18
 ### Calibration Dataset Capture
 ```bash
 # Record topics for offline calibration
-ros2 bag record /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 /livox/imu_192_168_1_10
+ros2 bag record /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 /livox/imu_transformed
 
 # Move robot to capture:
 # - Walls at multiple angles

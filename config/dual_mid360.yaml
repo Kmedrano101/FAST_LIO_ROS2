@@ -22,20 +22,20 @@
     feature_extract_enable: false        # Use all points (no feature extraction)
     point_filter_num: 2                  # Downsampling: keep every Nth point, 2 = 50% reduction
     max_iteration: 4                     # Max iterations for ICP optimization, 3-4 is good balance
-    filter_size_surf: 0.3                # Voxel size (m) for surface downsampling
-    filter_size_map: 0.4                 # Voxel size (m) for map downsampling
+    filter_size_surf: 0.2                # Voxel size (m) for surface downsampling
+    filter_size_map: 0.3                 # Voxel size (m) for map downsampling
     cube_side_length: 200.0              # Local map cube size (meters)
     runtime_pos_log_enable: false        # Log position during runtime (debugging)
 
-    map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/mine_sdk_fusion.pcd"
+    map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/mine_fusion.pcd"
 
     # ==========================================================================
     # MULTI-LIDAR CONFIGURATION
     # ==========================================================================
-    multi_lidar: true                        # CRITICAL: Enable dual LiDAR processing
+    multi_lidar: false                        # CRITICAL: Enable dual LiDAR processing
 
     # Update method: 0=BUNDLE (always merge), 1=ASYNC (always separate), 2=ADAPTIVE (auto-switch)
-    update_method: 1                         # Default: ASYNC mode for maximum update rate
+    update_method: 0                         # Default: ASYNC mode for maximum update rate
 
     # Adaptive mode thresholds (only used when update_method=2)
     voxelized_pt_num_thres: 100              # Min downsampled points to use ASYNC
@@ -51,7 +51,8 @@
       lid_topic:  "/livox/lidar_192_168_1_10"   # Front MID-360 (IP: 192.168.1.10)
       lid_topic2: "/livox/lidar_192_168_1_18"   # Rear MID-360 (IP: 192.168.1.18)
       # IMU topic (shared from primary sensor or external IMU)
-      imu_topic:  "/livox/imu_192_168_1_10"     # Primary MID-360 IMU
+      imu_topic:  "/livox/imu_transformed"     # Primary MID-360 IMU
+      #imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU
       # --- Time Synchronization ---
       time_sync_en: false                # Use hardware timestamps from sensors
       time_offset_lidar_to_imu: 0.0      # Time offset (seconds) between LiDAR and IMU
@@ -98,7 +99,7 @@
                                          # Use calibrated values from Livox SDK config
 
       # LiDAR 1 (Front MID-360, IP: 192.168.1.10) Extrinsics
-      extrinsic_T_1: [0.011, -0.06588, -0.02329]  # [x, y, z] meters
+      extrinsic_T_1: [0.011, 0.02329, -0.04412]  # [x, y, z] meters (test Imu nativo)
       #   Transformación base_link → frame IMU
       #   Cálculo:
       #     P_imu_nativo = [0.011, 0.02329, -0.04412] m (del datasheet MID-360)

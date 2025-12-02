@@ -70,7 +70,7 @@ def generate_launch_description():
     # Subscribes to:
     #   - /livox/lidar_192_168_1_10 (LiDAR 1 point cloud)
     #   - /livox/lidar_192_168_1_18 (LiDAR 2 point cloud)
-    #   - /livox/imu_192_168_1_10 (IMU data)
+    #   - /livox/imu_transformed (IMU data)
     # Publishes:
     #   - /Odometry (6-DOF pose and velocity)
     #   - /path (Trajectory)
@@ -115,7 +115,7 @@ def generate_launch_description():
             ' Subscribed Topics:\n',
             '   → /livox/lidar_192_168_1_10 (LiDAR 1 - Front MID-360)\n',
             '   → /livox/lidar_192_168_1_18 (LiDAR 2 - Rear MID-360)\n',
-            '   → /livox/imu_192_168_1_10 (IMU)\n',
+            '   → /livox/imu_transformed (IMU)\n',
             '───────────────────────────────────────────────────────────────\n',
             ' Published Topics:\n',
             '   → /Odometry (Pose + Velocity)\n',

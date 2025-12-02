@@ -600,9 +600,11 @@ bool sync_packages_multi(MeasureGroup &meas)
                 return false;
             }
 
-            // Check if we have scans from both LiDARs
+            // Check if we have scans from both LiDARs (search in more scans during motion)
             int lidar1_idx = -1, lidar2_idx = -1;
-            for (size_t i = 0; i < std::min(lidar_buffer.size(), size_t(5)); i++) {
+            size_t search_depth = std::min(lidar_buffer.size(), size_t(10)); // Increased from 5 to 10
+
+            for (size_t i = 0; i < search_depth; i++) {
                 if (lidar_buffer[i]->header.seq == 0 && lidar1_idx == -1) {
                     lidar1_idx = i;
                 }
@@ -614,18 +616,30 @@ bool sync_packages_multi(MeasureGroup &meas)
 
             // If we don't have both, wait
             if (lidar1_idx == -1 || lidar2_idx == -1) {
+                // Buffer overflow protection: if buffer > 20 scans, clear old ones
+                if (lidar_buffer.size() > 20) {
+                    RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                               "[BUNDLE] Buffer overflow (size=%zu), clearing oldest scan",
+                               lidar_buffer.size());
+                    lidar_buffer.pop_front();
+                    time_buffer.pop_front();
+                }
                 return false;
             }
 
-            // Check temporal synchronization (tolerance: 50ms)
+            // Check temporal synchronization with relaxed tolerance during motion
             double time1 = time_buffer[lidar1_idx];
             double time2 = time_buffer[lidar2_idx];
             double dt = fabs(time1 - time2);
 
-            if (dt > 0.05) {
+            // Adaptive tolerance: 100ms (relaxed from 50ms for motion scenarios)
+            const double time_tolerance = 0.10;
+
+            if (dt > time_tolerance) {
                 // Scans not synchronized, discard the older one
                 RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                           "[BUNDLE] Time desync: %.3f ms, discarding older scan", dt * 1000);
+                           "[BUNDLE] Time desync: %.3f ms (tolerance: %.1f ms), buffer_size=%zu, discarding older scan",
+                           dt * 1000, time_tolerance * 1000, lidar_buffer.size());
                 if (time1 < time2) {
                     lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
                     time_buffer.erase(time_buffer.begin() + lidar1_idx);
@@ -654,21 +668,13 @@ bool sync_packages_multi(MeasureGroup &meas)
             current_lidar_num = 0; // Indicate merged scan
 
             RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                       "[BUNDLE] Merged scans: L1=%zu pts, L2=%zu pts, Total=%zu pts",
-                       scan1->size(), scan2->size(), merged->size());
+                       "[BUNDLE] Merged scans: L1=%zu pts (idx=%d), L2=%zu pts (idx=%d), Total=%zu pts, dt=%.1f ms, buffer_size=%zu",
+                       scan1->size(), lidar1_idx, scan2->size(), lidar2_idx, merged->size(),
+                       dt * 1000, lidar_buffer.size());
 
-            // Remove both scans from buffer (remove higher index first)
-            if (lidar1_idx > lidar2_idx) {
-                lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
-                time_buffer.erase(time_buffer.begin() + lidar1_idx);
-                lidar_buffer.erase(lidar_buffer.begin() + lidar2_idx);
-                time_buffer.erase(time_buffer.begin() + lidar2_idx);
-            } else {
-                lidar_buffer.erase(lidar_buffer.begin() + lidar2_idx);
-                time_buffer.erase(time_buffer.begin() + lidar2_idx);
-                lidar_buffer.erase(lidar_buffer.begin() + lidar1_idx);
-                time_buffer.erase(time_buffer.begin() + lidar1_idx);
-            }
+            // Store indices for later removal (after IMU check)
+            meas.bundle_lidar1_idx = lidar1_idx;
+            meas.bundle_lidar2_idx = lidar2_idx;
         }
         // === MÉTODO ASYNC ===
         // Use whichever LiDAR scan is available first
@@ -695,8 +701,9 @@ bool sync_packages_multi(MeasureGroup &meas)
                 }
             }
 
-            lidar_buffer.pop_front();
-            time_buffer.pop_front();
+            // Mark as non-bundle for cleanup
+            meas.bundle_lidar1_idx = -1;
+            meas.bundle_lidar2_idx = -1;
         }
 
         // Calculate lidar end time
@@ -723,6 +730,28 @@ bool sync_packages_multi(MeasureGroup &meas)
     if (last_timestamp_imu < lidar_end_time)
     {
         return false;
+    }
+
+    // NOW remove scans from buffer after confirming IMU data is ready
+    if (meas.bundle_lidar1_idx != -1 && meas.bundle_lidar2_idx != -1) {
+        // Bundle mode: remove both scans (remove higher index first)
+        int idx1 = meas.bundle_lidar1_idx;
+        int idx2 = meas.bundle_lidar2_idx;
+        if (idx1 > idx2) {
+            lidar_buffer.erase(lidar_buffer.begin() + idx1);
+            time_buffer.erase(time_buffer.begin() + idx1);
+            lidar_buffer.erase(lidar_buffer.begin() + idx2);
+            time_buffer.erase(time_buffer.begin() + idx2);
+        } else {
+            lidar_buffer.erase(lidar_buffer.begin() + idx2);
+            time_buffer.erase(time_buffer.begin() + idx2);
+            lidar_buffer.erase(lidar_buffer.begin() + idx1);
+            time_buffer.erase(time_buffer.begin() + idx1);
+        }
+    } else {
+        // Async mode: remove single scan from front
+        lidar_buffer.pop_front();
+        time_buffer.pop_front();
     }
 
     /*** push imu data, and pop from imu buffer ***/
