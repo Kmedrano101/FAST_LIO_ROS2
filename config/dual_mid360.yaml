@@ -23,8 +23,8 @@
     point_filter_num: 2                  # Downsampling: keep every Nth point, 2 = 50% reduction
     max_iteration: 4                     # Max iterations for ICP optimization, 3-4 is good balance
     filter_size_surf: 0.2                # Voxel size (m) for surface downsampling
-    filter_size_map: 0.3                 # Voxel size (m) for map downsampling
-    cube_side_length: 200.0              # Local map cube size (meters)
+    filter_size_map: 0.2                 # Voxel size (m) for map downsampling
+    cube_side_length: 100.0              # Local map cube size (meters)
     runtime_pos_log_enable: false        # Log position during runtime (debugging)
 
     map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/mine_fusion.pcd"
@@ -48,10 +48,10 @@
       # --- Topic Configuration ---
       # CRITICAL: These must match your livox_ros_driver2 output topics
       # Set multi_topic: 1 in livox_params.yaml to get separate topics
-      lid_topic:  "/livox/lidar_192_168_1_10"   # Front MID-360 (IP: 192.168.1.10)
-      lid_topic2: "/livox/lidar_192_168_1_18"   # Rear MID-360 (IP: 192.168.1.18)
+      lid_topic:  "/livox/lidar_192_168_1_18"   # Front MID-360 (IP: 192.168.1.10)
+      lid_topic2: "/livox/lidar_192_168_1_10"   # Rear MID-360 (IP: 192.168.1.18)
       # IMU topic (shared from primary sensor or external IMU)
-      imu_topic:  "/livox/imu_192_168_1_10"     # Primary MID-360 IMU, use transformed IMU: /livox/imu_transformed
+      imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU, use transformed IMU: /livox/imu_transformed
       #imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU
       # --- Time Synchronization ---
       time_sync_en: false                # Use hardware timestamps from sensors
@@ -65,10 +65,9 @@
       # --- PRIMARY LIDAR (LiDAR 1) ---
       lidar_type: 4                      # 1=AVIA, 2=Velodyne, 3=Ouster, 4=MID360, 5=Gazebo
       scan_line: 4                       # MID-360 has 4 scan lines
-      blind: 0.3                         # Ignore points closer than 0.3m, Increase to 0.5m if heavy dust
+      blind: 1.0                         # Ignore points closer than 0.3m, Increase to 0.5m if heavy dust
       scan_rate: 10                      # LiDAR scan rate (Hz), MID-360 supports 10Hz
       timestamp_unit: 3                  # 0=sec, 1=ms, 2=μs, 3=ns, MID-360 uses nanoseconds
-      point_filter_num: 2                # Downsample: keep 1 in every 2 points
 
       # --- SECONDARY LIDAR (LiDAR 2) ---
       lidar_type2: 4                     # MID-360 (same as primary)
@@ -85,14 +84,14 @@
       # --- IMU Noise Model ---
       # Underground mines have high vibration from rough terrain
       # Increase covariance values to handle vibration noise
-      acc_cov: 0.5                       # Accelerometer noise covariance
-      gyr_cov: 0.5                       # Gyroscope noise covariance
-      b_acc_cov: 0.0001                  # Accelerometer bias covariance
-      b_gyr_cov: 0.0001                  # Gyroscope bias covariance
+      acc_cov: 0.8                       # Accelerometer noise covariance
+      gyr_cov: 0.8                       # Gyroscope noise covariance
+      b_acc_cov: 0.001                  # Accelerometer bias covariance
+      b_gyr_cov: 0.001                  # Gyroscope bias covariance
 
       # --- Field of View & Detection Range ---
       fov_degree: 360.0                  # Total FOV with SDK-fused dual sensors
-      det_range: 40.0                    # Maximum detection range (meters)
+      det_range: 30.0                    # Maximum detection range (meters)
 
       # --- Extrinsic Calibration ---
       extrinsic_est_en: false            # Disable online estimation
