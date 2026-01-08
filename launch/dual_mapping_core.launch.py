@@ -68,9 +68,9 @@ def generate_launch_description():
     # ==========================================================================
     # Main SLAM computation node
     # Subscribes to:
-    #   - /livox/lidar_192_168_1_10 (LiDAR 1 point cloud)
-    #   - /livox/lidar_192_168_1_18 (LiDAR 2 point cloud)
-    #   - /livox/imu_transformed (IMU data)
+    #   - /livox/lidar_192_168_1_10 (LiDAR 1 - Front MID-360 point cloud)
+    #   - /livox/lidar_192_168_1_18 (LiDAR 2 - Rear MID-360 point cloud)
+    #   - /livox/imu_transformed (IMU data aligned with base_link)
     # Publishes:
     #   - /Odometry (6-DOF pose and velocity)
     #   - /path (Trajectory)
@@ -115,7 +115,7 @@ def generate_launch_description():
             ' Subscribed Topics:\n',
             '   → /livox/lidar_192_168_1_10 (LiDAR 1 - Front MID-360)\n',
             '   → /livox/lidar_192_168_1_18 (LiDAR 2 - Rear MID-360)\n',
-            '   → /livox/imu_transformed (IMU)\n',
+            '   → /livox/imu_transformed (IMU aligned with base_link)\n',
             '───────────────────────────────────────────────────────────────\n',
             ' Published Topics:\n',
             '   → /Odometry (Pose + Velocity)\n',

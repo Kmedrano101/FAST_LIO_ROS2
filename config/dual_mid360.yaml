@@ -48,11 +48,10 @@
       # --- Topic Configuration ---
       # CRITICAL: These must match your livox_ros_driver2 output topics
       # Set multi_topic: 1 in livox_params.yaml to get separate topics
-      lid_topic:  "/livox/lidar_192_168_1_18"   # Front MID-360 (IP: 192.168.1.10)
-      lid_topic2: "/livox/lidar_192_168_1_10"   # Rear MID-360 (IP: 192.168.1.18)
+      lid_topic:  "/livox/lidar_192_168_1_10"   # LiDAR 1 - Front MID-360 (IP: 192.168.1.10)
+      lid_topic2: "/livox/lidar_192_168_1_18"   # LiDAR 2 - Rear MID-360 (IP: 192.168.1.18)
       # IMU topic (shared from primary sensor or external IMU)
-      imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU, use transformed IMU: /livox/imu_transformed
-      #imu_topic:  "/livox/imu_192_168_1_18"     # Primary MID-360 IMU
+      imu_topic:  "/livox/imu_192_168_1_10"      # Transformed IMU aligned with base_link
       # --- Time Synchronization ---
       time_sync_en: false                # Use hardware timestamps from sensors
       time_offset_lidar_to_imu: 0.0      # Time offset (seconds) between LiDAR and IMU
