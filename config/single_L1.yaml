@@ -11,7 +11,9 @@
 
         common:
             lid_topic:  "/livox/lidar_192_168_1_10"
-            imu_topic:  "/livox/imu_transformed"
+            imu_topic:  "/livox/imu_192_168_1_10"
+            map_frame: "camera_init"        # Map/world frame ID (parent frame for odometry)
+            body_frame: "body"              # Robot body frame ID (child frame for odometry)
             time_sync_en: false             # ONLY turn on when external time synchronization is really not possible
             time_offset_lidar_to_imu: 0.0   # Time offset between lidar and IMU calibrated by other algorithms, e.g. LI-Init (can be found in README).
                                             # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
@@ -43,8 +45,6 @@
             scan_publish_en:  true       # false: close all the point cloud output
             dense_publish_en: false      # false: low down the points number in a global-frame point clouds scan.
             scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
-            map_frame_id: "camera_init"  # FAST-LIO initialization frame (aligned to world via static TF)
-            body_frame_id: "drone"        # FAST-LIO body frame (renamed to avoid conflict with drone_gt)
 
         pcd_save:
             pcd_save_en: true

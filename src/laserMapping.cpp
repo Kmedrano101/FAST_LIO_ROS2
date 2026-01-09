@@ -117,6 +117,8 @@ condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path;
+string map_frame = "camera_init";   // Configurable map frame ID
+string body_frame = "body";          // Configurable body frame ID
 string traj_file_path, pcd_file_name;
 
 double res_mean_last = 0.05, total_residual = 0.0;
@@ -885,7 +887,7 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
         // laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
         laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
-        laserCloudmsg.header.frame_id = "camera_init";
+        laserCloudmsg.header.frame_id = map_frame;
         pubLaserCloudFull->publish(laserCloudmsg);
         publish_count -= PUBFRAME_PERIOD;
     }
@@ -936,7 +938,7 @@ void publish_frame_body(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shared
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
-    laserCloudmsg.header.frame_id = "body";
+    laserCloudmsg.header.frame_id = body_frame;
     pubLaserCloudFull_body->publish(laserCloudmsg);
     publish_count -= PUBFRAME_PERIOD;
 }
@@ -953,7 +955,7 @@ void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shar
     sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
     pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
     laserCloudFullRes3.header.stamp = get_ros_time(lidar_end_time);
-    laserCloudFullRes3.header.frame_id = "camera_init";
+    laserCloudFullRes3.header.frame_id = map_frame;
     pubLaserCloudEffect->publish(laserCloudFullRes3);
 }
 
@@ -974,7 +976,7 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
-    laserCloudmsg.header.frame_id = "camera_init";
+    laserCloudmsg.header.frame_id = map_frame;
     pubLaserCloudMap->publish(laserCloudmsg);
 }
 
@@ -992,7 +994,7 @@ void publish_lidar1_colored(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Sh
     sensor_msgs::msg::PointCloud2 cloud_msg;
     pcl::toROSMsg(*last_lidar1_world, cloud_msg);
     cloud_msg.header.stamp = get_ros_time(lidar_end_time);
-    cloud_msg.header.frame_id = "camera_init";
+    cloud_msg.header.frame_id = map_frame;
     pub->publish(cloud_msg);
 }
 
@@ -1004,7 +1006,7 @@ void publish_lidar2_colored(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Sh
     sensor_msgs::msg::PointCloud2 cloud_msg;
     pcl::toROSMsg(*last_lidar2_world, cloud_msg);
     cloud_msg.header.stamp = get_ros_time(lidar_end_time);
-    cloud_msg.header.frame_id = "camera_init";
+    cloud_msg.header.frame_id = map_frame;
     pub->publish(cloud_msg);
 }
 
@@ -1023,8 +1025,8 @@ void set_posestamp(T & out)
 
 void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped, std::unique_ptr<tf2_ros::TransformBroadcaster> & tf_br)
 {
-    odomAftMapped.header.frame_id = "camera_init";
-    odomAftMapped.child_frame_id = "body";
+    odomAftMapped.header.frame_id = map_frame;
+    odomAftMapped.child_frame_id = body_frame;
     odomAftMapped.header.stamp = get_ros_time(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped->publish(odomAftMapped);
@@ -1041,8 +1043,8 @@ void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPt
     }
 
     geometry_msgs::msg::TransformStamped trans;
-    trans.header.frame_id = "camera_init";
-    trans.child_frame_id = "body";
+    trans.header.frame_id = map_frame;
+    trans.child_frame_id = body_frame;
     trans.transform.translation.x = odomAftMapped.pose.pose.position.x;
     trans.transform.translation.y = odomAftMapped.pose.pose.position.y;
     trans.transform.translation.z = odomAftMapped.pose.pose.position.z;
@@ -1057,7 +1059,7 @@ void publish_path(rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath)
 {
     set_posestamp(msg_body_pose);
     msg_body_pose.header.stamp = get_ros_time(lidar_end_time); // ros::Time().fromSec(lidar_end_time);
-    msg_body_pose.header.frame_id = "camera_init";
+    msg_body_pose.header.frame_id = map_frame;
 
     /*** if path is too large, the rvis will crash ***/
     static int jjj = 0;
@@ -1233,6 +1235,8 @@ public:
         this->declare_parameter<string>("common.lid_topic", "/livox/lidar");
         this->declare_parameter<string>("common.lid_topic2", "/livox/lidar2");
         this->declare_parameter<string>("common.imu_topic", "/livox/imu");
+        this->declare_parameter<string>("common.map_frame", "camera_init");
+        this->declare_parameter<string>("common.body_frame", "body");
         this->declare_parameter<bool>("common.time_sync_en", false);
         this->declare_parameter<double>("common.time_offset_lidar_to_imu", 0.0);
         this->declare_parameter<double>("filter_size_corner", 0.5);
@@ -1288,6 +1292,8 @@ public:
         this->get_parameter_or<string>("common.lid_topic", lid_topic[LIDAR1], "/livox/lidar");
         this->get_parameter_or<string>("common.lid_topic2", lid_topic[LIDAR2], "/livox/lidar2");
         this->get_parameter_or<string>("common.imu_topic", imu_topic,"/livox/imu");
+        this->get_parameter_or<string>("common.map_frame", map_frame, "camera_init");
+        this->get_parameter_or<string>("common.body_frame", body_frame, "body");
         this->get_parameter_or<bool>("common.time_sync_en", time_sync_en, false);
         this->get_parameter_or<double>("common.time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
         this->get_parameter_or<double>("filter_size_surf",filter_size_surf_min,0.5);
@@ -1330,6 +1336,7 @@ public:
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 2: %d", p_pre->lidar_type[LIDAR2]);
+        RCLCPP_INFO(this->get_logger(), "Frame IDs - map: %s, body: %s", map_frame.c_str(), body_frame.c_str());
 
         // Log update method
         const char* method_names[] = {"BUNDLE", "ASYNC", "ADAPTIVE"};
@@ -1342,7 +1349,7 @@ public:
         }
 
         path.header.stamp = this->get_clock()->now();
-        path.header.frame_id ="camera_init";
+        path.header.frame_id = map_frame;
 
         FOV_DEG = (fov_deg + 10.0) > 179.9 ? 179.9 : (fov_deg + 10.0);
         HALF_FOV_COS = cos((FOV_DEG) * 0.5 * PI_M / 180.0);
