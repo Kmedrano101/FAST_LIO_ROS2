@@ -163,3 +163,16 @@
       pcd_file_name: "mine_map_fusion.pcd"  # Output filename
       interval: -1                          # -1: Save all frames at end (single file)
                                             # >0: Save every N frames (multiple files)
+
+    # ==========================================================================
+    # IMU TRANSFORMATION (for non-standard mounting orientations)
+    # ==========================================================================
+    # Use this when MID-360 is mounted with non-zero roll/pitch/yaw angles
+    # The transformation converts IMU readings from tilted sensor frame to upright target frame
+    imu_transform:
+      enable: false                         # Enable IMU frame transformation
+      roll_deg: 0.0                         # Roll rotation in degrees
+      pitch_deg: 0.0                        # Pitch rotation in degrees
+      yaw_deg: 0.0                          # Yaw rotation in degrees
+      acc_scale: 1.0                        # Acceleration scale factor
+                                            # Set to 9.80665 if IMU outputs in 'g' units

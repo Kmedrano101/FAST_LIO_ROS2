@@ -121,6 +121,11 @@ string map_frame = "camera_init";   // Configurable map frame ID
 string body_frame = "body";          // Configurable body frame ID
 string traj_file_path, pcd_file_name;
 
+/********* IMU Transformation ********/
+bool imu_transform_enabled = false;
+double imu_acc_scale = 1.0;          // Scale factor for acceleration (9.80665 if in g units)
+Eigen::Matrix3d imu_R_transform = Eigen::Matrix3d::Identity();  // Rotation matrix for IMU transform
+
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
@@ -190,6 +195,27 @@ void SigHandle(int sig)
     std::cout << "catch sig %d" << sig << std::endl;
     sig_buffer.notify_all();
     rclcpp::shutdown();
+}
+
+/**
+ * @brief Convert Euler angles (ZYX convention) to rotation matrix
+ * @param roll Roll angle in radians
+ * @param pitch Pitch angle in radians
+ * @param yaw Yaw angle in radians
+ * @return 3x3 rotation matrix
+ */
+Eigen::Matrix3d eulerToRotationMatrix(double roll, double pitch, double yaw)
+{
+    double cr = std::cos(roll),  sr = std::sin(roll);
+    double cp = std::cos(pitch), sp = std::sin(pitch);
+    double cy = std::cos(yaw),   sy = std::sin(yaw);
+
+    Eigen::Matrix3d R;
+    R << cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr,
+         sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr,
+         -sp,    cp*sr,             cp*cr;
+
+    return R;
 }
 
 inline void dump_lio_state_to_log(FILE *fp)  
@@ -556,7 +582,28 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
     publish_count ++;
     // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
     sensor_msgs::msg::Imu::SharedPtr msg(new sensor_msgs::msg::Imu(*msg_in));
-    
+
+    // Apply IMU transformation if enabled
+    if (imu_transform_enabled)
+    {
+        // Transform linear acceleration (apply scale and rotation)
+        Eigen::Vector3d acc(msg_in->linear_acceleration.x * imu_acc_scale,
+                           msg_in->linear_acceleration.y * imu_acc_scale,
+                           msg_in->linear_acceleration.z * imu_acc_scale);
+        Eigen::Vector3d acc_t = imu_R_transform * acc;
+        msg->linear_acceleration.x = acc_t.x();
+        msg->linear_acceleration.y = acc_t.y();
+        msg->linear_acceleration.z = acc_t.z();
+
+        // Transform angular velocity (rotation only)
+        Eigen::Vector3d gyro(msg_in->angular_velocity.x,
+                            msg_in->angular_velocity.y,
+                            msg_in->angular_velocity.z);
+        Eigen::Vector3d gyro_t = imu_R_transform * gyro;
+        msg->angular_velocity.x = gyro_t.x();
+        msg->angular_velocity.y = gyro_t.y();
+        msg->angular_velocity.z = gyro_t.z();
+    }
 
     msg->header.stamp = get_ros_time(get_time_sec(msg_in->header.stamp) - time_diff_lidar_to_imu);
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
@@ -1275,6 +1322,12 @@ public:
         this->declare_parameter<vector<double>>("mapping.extrinsic_R_L2_wrt_L1", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_T_L1_wrt_drone", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R_L1_wrt_drone", vector<double>());
+        // IMU transformation parameters
+        this->declare_parameter<bool>("imu_transform.enable", false);
+        this->declare_parameter<double>("imu_transform.roll_deg", 0.0);
+        this->declare_parameter<double>("imu_transform.pitch_deg", 0.0);
+        this->declare_parameter<double>("imu_transform.yaw_deg", 0.0);
+        this->declare_parameter<double>("imu_transform.acc_scale", 1.0);
 
         this->declare_parameter<bool>("traj_save.traj_save_en", false);
         this->declare_parameter<string>("traj_save.traj_file_path", "");
@@ -1333,6 +1386,30 @@ public:
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R_L1_wrt_drone", extrinR4, vector<double>());
         this->get_parameter_or<bool>("traj_save.traj_save_en", traj_save_en, false);
         this->get_parameter_or<string>("traj_save.traj_file_path", traj_file_path, "");
+
+        // Get IMU transformation parameters
+        double imu_roll_deg = 0.0, imu_pitch_deg = 0.0, imu_yaw_deg = 0.0;
+        this->get_parameter_or<bool>("imu_transform.enable", imu_transform_enabled, false);
+        this->get_parameter_or<double>("imu_transform.roll_deg", imu_roll_deg, 0.0);
+        this->get_parameter_or<double>("imu_transform.pitch_deg", imu_pitch_deg, 0.0);
+        this->get_parameter_or<double>("imu_transform.yaw_deg", imu_yaw_deg, 0.0);
+        this->get_parameter_or<double>("imu_transform.acc_scale", imu_acc_scale, 1.0);
+
+        // Compute IMU rotation matrix if transformation is enabled
+        if (imu_transform_enabled) {
+            double roll = imu_roll_deg * M_PI / 180.0;
+            double pitch = imu_pitch_deg * M_PI / 180.0;
+            double yaw = imu_yaw_deg * M_PI / 180.0;
+            // Use transpose (inverse) since we transform sensor readings from tilted to upright frame
+            imu_R_transform = eulerToRotationMatrix(roll, pitch, yaw).transpose();
+
+            RCLCPP_INFO(this->get_logger(), "IMU Transform ENABLED: roll=%.1f°, pitch=%.1f°, yaw=%.1f°, acc_scale=%.4f",
+                       imu_roll_deg, imu_pitch_deg, imu_yaw_deg, imu_acc_scale);
+            RCLCPP_INFO(this->get_logger(), "IMU Rotation matrix:");
+            RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(0,0), imu_R_transform(0,1), imu_R_transform(0,2));
+            RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(1,0), imu_R_transform(1,1), imu_R_transform(1,2));
+            RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(2,0), imu_R_transform(2,1), imu_R_transform(2,2));
+        }
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 2: %d", p_pre->lidar_type[LIDAR2]);

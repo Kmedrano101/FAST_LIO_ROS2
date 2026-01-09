@@ -9,8 +9,8 @@ if(POLICY CMP0074)
   cmake_policy(SET CMP0074 NEW)
 endif()
 
-ADD_COMPILE_OPTIONS(-std=c++17) 
-ADD_COMPILE_OPTIONS(-std=c++17) 
+ADD_COMPILE_OPTIONS(-std=c++17)
+ADD_COMPILE_OPTIONS(-Wno-psabi)  # Suppress ABI note about std::pair parameter passing in GCC 10.1+
 set(CMAKE_CXX_FLAGS "-std=c++17 -O3") 
   
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\") 

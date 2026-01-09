@@ -49,5 +49,13 @@
         pcd_save:
             pcd_save_en: true
             pcd_file_name: "dense_map.pcd"
-            interval: -1                 # how many LiDAR frames saved in each pcd file; 
+            interval: -1                 # how many LiDAR frames saved in each pcd file;
                                         # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+        # IMU transformation (for non-standard mounting orientations)
+        imu_transform:
+            enable: false                # Enable IMU frame transformation
+            roll_deg: 0.0                # Roll rotation in degrees
+            pitch_deg: 0.0               # Pitch rotation in degrees
+            yaw_deg: 0.0                 # Yaw rotation in degrees
+            acc_scale: 1.0               # Acceleration scale (9.80665 if IMU outputs in 'g' units)
