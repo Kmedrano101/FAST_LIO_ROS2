@@ -37,6 +37,8 @@
 #include <math.h>
 #include <thread>
 #include <fstream>
+#include <iostream>
+#include <iomanip>
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
@@ -77,6 +79,10 @@ double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
 bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
 bool   traj_save_en = false, async_debug = false;
+bool   s_plot_overflow_warned[2] = {false, false};
+bool   time_log_overflow_warned = false;
+bool   feats_overflow_warned = false;
+static rclcpp::Clock::SharedPtr log_clock = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
 
 /********* MULTI-LIDAR Support ********/
 bool multi_lidar = false;
@@ -113,7 +119,6 @@ const float MOV_THRESHOLD = 1.5f;
 double time_diff_lidar_to_imu = 0.0;
 
 mutex mtx_buffer;
-condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path;
@@ -123,6 +128,8 @@ string traj_file_path, pcd_file_name;
 
 /********* IMU Transformation ********/
 bool imu_transform_enabled = false;
+bool imu_transform_debug = false;    // Debug logging for IMU transform
+int imu_debug_counter = 0;           // Counter for debug log throttling
 double imu_acc_scale = 1.0;          // Scale factor for acceleration (9.80665 if in g units)
 Eigen::Matrix3d imu_R_transform = Eigen::Matrix3d::Identity();  // Rotation matrix for IMU transform
 
@@ -193,7 +200,6 @@ void SigHandle(int sig)
 {
     flg_exit = true;
     std::cout << "catch sig %d" << sig << std::endl;
-    sig_buffer.notify_all();
     rclcpp::shutdown();
 }
 
@@ -356,11 +362,9 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     double preprocess_start_time = omp_get_wtime();
 
     // Log data reception for LiDAR 1
-    if (scan_count[lidar_id] % 100 == 1) {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
-                    scan_count[lidar_id], cur_time, msg->width * msg->height);
-    }
+    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
+                scan_count[lidar_id], cur_time, msg->width * msg->height);
 
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
@@ -394,9 +398,15 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(cur_time);
     last_timestamp_lidar[lidar_id] = cur_time;
-    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    if (scan_count[lidar_id] < MAXN) {
+        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    } else if (!s_plot_overflow_warned[lidar_id]) {
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                    lidar_id + 1, scan_count[lidar_id], MAXN);
+        s_plot_overflow_warned[lidar_id] = true;
+    }
     mtx_buffer.unlock();
-    sig_buffer.notify_all();
 }
 
 void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
@@ -408,11 +418,9 @@ void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     double preprocess_start_time = omp_get_wtime();
 
     // Log data reception for LiDAR 2
-    if (scan_count[lidar_id] % 100 == 1) {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
-                    scan_count[lidar_id], cur_time, msg->width * msg->height);
-    }
+    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
+                scan_count[lidar_id], cur_time, msg->width * msg->height);
 
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
@@ -446,9 +454,15 @@ void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(cur_time);
     last_timestamp_lidar[lidar_id] = cur_time;
-    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    if (scan_count[lidar_id] < MAXN) {
+        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    } else if (!s_plot_overflow_warned[lidar_id]) {
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                    lidar_id + 1, scan_count[lidar_id], MAXN);
+        s_plot_overflow_warned[lidar_id] = true;
+    }
     mtx_buffer.unlock();
-    sig_buffer.notify_all();
 }
 
 double timediff_lidar_wrt_imu = 0.0;
@@ -463,11 +477,9 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     scan_count[lidar_id] ++;
 
     // Log data reception for LiDAR 1
-    if (scan_count[lidar_id] % 100 == 1) {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
-                    scan_count[lidar_id], cur_time);
-    }
+    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
+                scan_count[lidar_id], cur_time);
 
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
@@ -514,9 +526,15 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(last_timestamp_lidar[lidar_id]);
 
-    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    if (scan_count[lidar_id] < MAXN) {
+        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    } else if (!s_plot_overflow_warned[lidar_id]) {
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                    lidar_id + 1, scan_count[lidar_id], MAXN);
+        s_plot_overflow_warned[lidar_id] = true;
+    }
     mtx_buffer.unlock();
-    sig_buffer.notify_all();
 }
 
 void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
@@ -528,11 +546,9 @@ void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     scan_count[lidar_id] ++;
 
     // Log data reception for LiDAR 2
-    if (scan_count[lidar_id] % 100 == 1) {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
-                    scan_count[lidar_id], cur_time);
-    }
+    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
+                scan_count[lidar_id], cur_time);
 
     if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
     {
@@ -572,9 +588,15 @@ void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     lidar_buffer.push_back(ptr_transformed);
     time_buffer.push_back(last_timestamp_lidar[lidar_id]);
 
-    s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    if (scan_count[lidar_id] < MAXN) {
+        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+    } else if (!s_plot_overflow_warned[lidar_id]) {
+        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                    lidar_id + 1, scan_count[lidar_id], MAXN);
+        s_plot_overflow_warned[lidar_id] = true;
+    }
     mtx_buffer.unlock();
-    sig_buffer.notify_all();
 }
 #endif
 void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
@@ -603,6 +625,42 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
         msg->angular_velocity.x = gyro_t.x();
         msg->angular_velocity.y = gyro_t.y();
         msg->angular_velocity.z = gyro_t.z();
+
+        // Debug logging (throttled to ~1Hz to avoid flooding)
+        if (imu_transform_debug && (++imu_debug_counter % 200 == 0))
+        {
+            double acc_raw_mag = std::sqrt(msg_in->linear_acceleration.x * msg_in->linear_acceleration.x +
+                                           msg_in->linear_acceleration.y * msg_in->linear_acceleration.y +
+                                           msg_in->linear_acceleration.z * msg_in->linear_acceleration.z);
+            double acc_t_mag = acc_t.norm();
+
+            std::cout << "\n[IMU Transform Debug] ----------------------------------------" << std::endl;
+            std::cout << "  RAW  Acc: [" << std::fixed << std::setprecision(4)
+                      << msg_in->linear_acceleration.x << ", "
+                      << msg_in->linear_acceleration.y << ", "
+                      << msg_in->linear_acceleration.z << "] mag=" << acc_raw_mag << " (g units)" << std::endl;
+            std::cout << "  XFRM Acc: [" << acc_t.x() << ", " << acc_t.y() << ", " << acc_t.z()
+                      << "] mag=" << acc_t_mag << " (after scale=" << imu_acc_scale << ")" << std::endl;
+            std::cout << "  RAW  Gyr: [" << msg_in->angular_velocity.x << ", "
+                      << msg_in->angular_velocity.y << ", "
+                      << msg_in->angular_velocity.z << "] rad/s" << std::endl;
+            std::cout << "  XFRM Gyr: [" << gyro_t.x() << ", " << gyro_t.y() << ", " << gyro_t.z()
+                      << "] rad/s" << std::endl;
+
+            // Identify gravity axis
+            std::string grav_axis_raw = "?", grav_axis_xfrm = "?";
+            if (std::abs(msg_in->linear_acceleration.x) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.x > 0) ? "+X" : "-X";
+            else if (std::abs(msg_in->linear_acceleration.y) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.y > 0) ? "+Y" : "-Y";
+            else if (std::abs(msg_in->linear_acceleration.z) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.z > 0) ? "+Z" : "-Z";
+
+            if (std::abs(acc_t.x()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.x() > 0) ? "+X" : "-X";
+            else if (std::abs(acc_t.y()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.y() > 0) ? "+Y" : "-Y";
+            else if (std::abs(acc_t.z()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.z() > 0) ? "+Z" : "-Z";
+
+            std::cout << "  Gravity: RAW=" << grav_axis_raw << " → TRANSFORMED=" << grav_axis_xfrm
+                      << " (expect +Y → +Z)" << std::endl;
+            std::cout << "-----------------------------------------------------------\n" << std::endl;
+        }
     }
 
     msg->header.stamp = get_ros_time(get_time_sec(msg_in->header.stamp) - time_diff_lidar_to_imu);
@@ -626,7 +684,6 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
 
     imu_buffer.push_back(msg);
     mtx_buffer.unlock();
-    sig_buffer.notify_all();
 }
 
 double lidar_mean_scantime = 0.0;
@@ -716,10 +773,10 @@ bool sync_packages_multi(MeasureGroup &meas)
             meas.lidar_beg_time = std::min(time1, time2);
             current_lidar_num = 0; // Indicate merged scan
 
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+            /*RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
                        "[BUNDLE] Merged scans: L1=%zu pts (idx=%d), L2=%zu pts (idx=%d), Total=%zu pts, dt=%.1f ms, buffer_size=%zu",
                        scan1->size(), lidar1_idx, scan2->size(), lidar2_idx, merged->size(),
-                       dt * 1000, lidar_buffer.size());
+                       dt * 1000, lidar_buffer.size());*/
 
             // Store indices for later removal (after IMU check)
             meas.bundle_lidar1_idx = lidar1_idx;
@@ -786,17 +843,27 @@ bool sync_packages_multi(MeasureGroup &meas)
         // Bundle mode: remove both scans (remove higher index first)
         int idx1 = meas.bundle_lidar1_idx;
         int idx2 = meas.bundle_lidar2_idx;
-        if (idx1 > idx2) {
-            lidar_buffer.erase(lidar_buffer.begin() + idx1);
-            time_buffer.erase(time_buffer.begin() + idx1);
-            lidar_buffer.erase(lidar_buffer.begin() + idx2);
-            time_buffer.erase(time_buffer.begin() + idx2);
-        } else {
-            lidar_buffer.erase(lidar_buffer.begin() + idx2);
-            time_buffer.erase(time_buffer.begin() + idx2);
-            lidar_buffer.erase(lidar_buffer.begin() + idx1);
-            time_buffer.erase(time_buffer.begin() + idx1);
+        const size_t lidar_size = lidar_buffer.size();
+        const size_t time_size = time_buffer.size();
+        if (lidar_size != time_size ||
+            idx1 < 0 || idx2 < 0 ||
+            idx1 >= static_cast<int>(lidar_size) ||
+            idx2 >= static_cast<int>(lidar_size)) {
+            RCLCPP_ERROR(rclcpp::get_logger("laser_mapping"),
+                         "[BUNDLE] Buffer index out of range (idx1=%d, idx2=%d, lidar_size=%zu, time_size=%zu). Clearing buffers.",
+                         idx1, idx2, lidar_size, time_size);
+            lidar_buffer.clear();
+            time_buffer.clear();
+            lidar_pushed = false;
+            return false;
         }
+        if (idx1 < idx2) {
+            std::swap(idx1, idx2);
+        }
+        lidar_buffer.erase(lidar_buffer.begin() + idx1);
+        time_buffer.erase(time_buffer.begin() + idx1);
+        lidar_buffer.erase(lidar_buffer.begin() + idx2);
+        time_buffer.erase(time_buffer.begin() + idx2);
     } else {
         // Async mode: remove single scan from front
         lidar_buffer.pop_front();
@@ -1124,13 +1191,24 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     laserCloudOri->clear(); 
     corr_normvect->clear(); 
     total_residual = 0.0; 
+    const int max_feat = static_cast<int>(sizeof(point_selected_surf) / sizeof(point_selected_surf[0]));
+    int feats_limit = feats_down_size;
+    if (feats_limit > max_feat) {
+        feats_limit = max_feat;
+        if (!feats_overflow_warned) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "feats_down_size=%d exceeds point_selected_surf capacity (%d). Truncating for safety.",
+                        feats_down_size, max_feat);
+            feats_overflow_warned = true;
+        }
+    }
 
     /** closest surface search and residual computation **/
     #ifdef MP_EN
         omp_set_num_threads(MP_PROC_NUM);
         #pragma omp parallel for
     #endif
-    for (int i = 0; i < feats_down_size; i++)
+    for (int i = 0; i < feats_limit; i++)
     {
         PointType &point_body  = feats_down_body->points[i]; 
         PointType &point_world = feats_down_world->points[i]; 
@@ -1177,7 +1255,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     
     effct_feat_num = 0;
 
-    for (int i = 0; i < feats_down_size; i++)
+    for (int i = 0; i < feats_limit; i++)
     {
         if (point_selected_surf[i])
         {
@@ -1328,6 +1406,7 @@ public:
         this->declare_parameter<double>("imu_transform.pitch_deg", 0.0);
         this->declare_parameter<double>("imu_transform.yaw_deg", 0.0);
         this->declare_parameter<double>("imu_transform.acc_scale", 1.0);
+        this->declare_parameter<bool>("imu_transform.debug_log", false);
 
         this->declare_parameter<bool>("traj_save.traj_save_en", false);
         this->declare_parameter<string>("traj_save.traj_file_path", "");
@@ -1394,6 +1473,7 @@ public:
         this->get_parameter_or<double>("imu_transform.pitch_deg", imu_pitch_deg, 0.0);
         this->get_parameter_or<double>("imu_transform.yaw_deg", imu_yaw_deg, 0.0);
         this->get_parameter_or<double>("imu_transform.acc_scale", imu_acc_scale, 1.0);
+        this->get_parameter_or<bool>("imu_transform.debug_log", imu_transform_debug, false);
 
         // Compute IMU rotation matrix if transformation is enabled
         if (imu_transform_enabled) {
@@ -1403,12 +1483,22 @@ public:
             // Use transpose (inverse) since we transform sensor readings from tilted to upright frame
             imu_R_transform = eulerToRotationMatrix(roll, pitch, yaw).transpose();
 
-            RCLCPP_INFO(this->get_logger(), "IMU Transform ENABLED: roll=%.1f°, pitch=%.1f°, yaw=%.1f°, acc_scale=%.4f",
-                       imu_roll_deg, imu_pitch_deg, imu_yaw_deg, imu_acc_scale);
-            RCLCPP_INFO(this->get_logger(), "IMU Rotation matrix:");
+            RCLCPP_INFO(this->get_logger(), "============ IMU TRANSFORM CONFIGURATION ============");
+            RCLCPP_INFO(this->get_logger(), "IMU Transform ENABLED: roll=%.1f°, pitch=%.1f°, yaw=%.1f°",
+                       imu_roll_deg, imu_pitch_deg, imu_yaw_deg);
+            RCLCPP_INFO(this->get_logger(), "  acc_scale=%.4f, debug_log=%s",
+                       imu_acc_scale, imu_transform_debug ? "TRUE" : "FALSE");
+            RCLCPP_INFO(this->get_logger(), "IMU Rotation matrix (R^T applied to sensor readings):");
             RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(0,0), imu_R_transform(0,1), imu_R_transform(0,2));
             RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(1,0), imu_R_transform(1,1), imu_R_transform(1,2));
             RCLCPP_INFO(this->get_logger(), "  [%.4f, %.4f, %.4f]", imu_R_transform(2,0), imu_R_transform(2,1), imu_R_transform(2,2));
+
+            // Show expected transform effect
+            Eigen::Vector3d test_grav(0, 1, 0);  // Raw gravity in +Y
+            Eigen::Vector3d transformed_grav = imu_R_transform * test_grav;
+            RCLCPP_INFO(this->get_logger(), "Expected transform: gravity [0,1,0] -> [%.2f,%.2f,%.2f]",
+                       transformed_grav.x(), transformed_grav.y(), transformed_grav.z());
+            RCLCPP_INFO(this->get_logger(), "=======================================================");
         }
 
         RCLCPP_INFO(this->get_logger(), "p_pre->lidar_type 1: %d", p_pre->lidar_type[LIDAR1]);
@@ -1462,6 +1552,9 @@ public:
         // FILE *fp;
         string pos_log_dir = root_dir + "/Log/pos_log.txt";
         fp = fopen(pos_log_dir.c_str(),"w");
+        if (fp == nullptr) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to open pos log file: %s", pos_log_dir.c_str());
+        }
 
         // ofstream fout_pre, fout_out, fout_dbg;
         fout_pre.open(DEBUG_FILE_DIR("mat_pre.txt"),ios::out);
@@ -1575,7 +1668,10 @@ public:
     {
         fout_out.close();
         fout_pre.close();
-        fclose(fp);
+        if (fp != nullptr) {
+            fclose(fp);
+            fp = nullptr;
+        }
     }
 
 private:
@@ -1733,6 +1829,7 @@ private:
                 aver_time_incre = aver_time_incre * (frame_num - 1)/frame_num + (kdtree_incremental_time)/frame_num;
                 aver_time_solve = aver_time_solve * (frame_num - 1)/frame_num + (solve_time + solve_H_time)/frame_num;
                 aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1)/frame_num + solve_time / frame_num;
+            if (time_log_counter < MAXN) {
                 T1[time_log_counter] = Measures.lidar_beg_time;
                 s_plot[time_log_counter] = t5 - t0;
                 s_plot2[time_log_counter] = feats_undistort->points.size();
@@ -1745,11 +1842,19 @@ private:
                 s_plot9[time_log_counter] = aver_time_consu;
                 s_plot10[time_log_counter] = add_point_size;
                 time_log_counter ++;
+            } else if (!time_log_overflow_warned) {
+                RCLCPP_WARN(this->get_logger(),
+                            "time_log_counter overflow (MAXN=%d). Skipping further time log writes.",
+                            MAXN);
+                time_log_overflow_warned = true;
+            }
                 printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
                 ext_euler = SO3ToEuler(state_point.offset_R_L_I);
                 fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
                 <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
-                dump_lio_state_to_log(fp);
+                if (fp != nullptr) {
+                    dump_lio_state_to_log(fp);
+                }
             }
         }
     }
@@ -1802,7 +1907,7 @@ private:
     bool flg_EKF_converged, EKF_stop_flg = 0;
     double epsi[23] = {0.001};
 
-    FILE *fp;
+    FILE *fp = nullptr;
     ofstream fout_pre, fout_out, fout_dbg;
 };
 

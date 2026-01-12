@@ -169,10 +169,20 @@
     # ==========================================================================
     # Use this when MID-360 is mounted with non-zero roll/pitch/yaw angles
     # The transformation converts IMU readings from tilted sensor frame to upright target frame
+    #
+    # IMPORTANT: These angles MUST match the livox_ros_driver2 extrinsic_parameter
+    # for LiDAR 1 (192.168.1.10) to ensure IMU and point cloud frames are aligned.
+    # Driver config: roll=90°, pitch=0°, yaw=180° → IMU transform must match!
+    #
+    # Transform effect on raw IMU (gravity in +Y):
+    #   - After transform: gravity in +Z
+    #   - FAST-LIO computes: grav = -mean_acc → gravity points -Z (correct!)
+    #   - X-axis flipped to match point cloud frame (-X)
+    #
     imu_transform:
-      enable: false                         # Enable IMU frame transformation
-      roll_deg: 0.0                         # Roll rotation in degrees
-      pitch_deg: 0.0                        # Pitch rotation in degrees
-      yaw_deg: 0.0                          # Yaw rotation in degrees
-      acc_scale: 1.0                        # Acceleration scale factor
-                                            # Set to 9.80665 if IMU outputs in 'g' units
+      enable: true                         # Enable IMU frame transformation
+      roll_deg: 90.0                        # Roll rotation (matches driver extrinsics)
+      pitch_deg: 0.0                        # Pitch rotation
+      yaw_deg: 180.0                        # Yaw rotation (CRITICAL: must be 180° to match driver!)
+      acc_scale: 1.0                        # Keep 1.0 - FAST-LIO auto-normalizes via mean_acc.norm()
+      debug_log: false                       # Enable debug logging for IMU transform verification
