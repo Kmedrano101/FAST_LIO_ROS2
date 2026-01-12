@@ -42,6 +42,8 @@ class ImuProcess
   void set_extrinsic(const V3D &transl, const M3D &rot);
   void set_extrinsic(const V3D &transl);
   void set_extrinsic(const MD(4,4) &T);
+  // LiDAR 2 extrinsics for dual-lidar setups
+  void set_extrinsic2(const V3D &transl, const M3D &rot);
   void set_gyr_cov(const V3D &scaler);
   void set_acc_cov(const V3D &scaler);
   void set_gyr_bias_cov(const V3D &b_g);
@@ -68,8 +70,11 @@ class ImuProcess
   deque<sensor_msgs::msg::Imu::ConstSharedPtr> v_imu_;
   vector<Pose6D> IMUpose;
   vector<M3D>    v_rot_pcl_;
-  M3D Lidar_R_wrt_IMU;
-  V3D Lidar_T_wrt_IMU;
+  M3D Lidar_R_wrt_IMU;      // LiDAR 1 rotation w.r.t. IMU
+  V3D Lidar_T_wrt_IMU;      // LiDAR 1 translation w.r.t. IMU
+  M3D Lidar_R_wrt_IMU_2;    // LiDAR 2 rotation w.r.t. IMU (for dual-lidar)
+  V3D Lidar_T_wrt_IMU_2;    // LiDAR 2 translation w.r.t. IMU (for dual-lidar)
+  bool dual_lidar_enabled = false;  // Flag for dual-lidar mode
   V3D mean_acc;
   V3D mean_gyr;
   V3D angvel_last;
@@ -95,6 +100,10 @@ ImuProcess::ImuProcess()
   angvel_last     = Zero3d;
   Lidar_T_wrt_IMU = Zero3d;
   Lidar_R_wrt_IMU = Eye3d;
+  // Initialize LiDAR 2 extrinsics (same as LiDAR 1 by default)
+  Lidar_T_wrt_IMU_2 = Zero3d;
+  Lidar_R_wrt_IMU_2 = Eye3d;
+  dual_lidar_enabled = false;
   last_imu_.reset(new sensor_msgs::msg::Imu());
 }
 
@@ -131,6 +140,15 @@ void ImuProcess::set_extrinsic(const V3D &transl, const M3D &rot)
 {
   Lidar_T_wrt_IMU = transl;
   Lidar_R_wrt_IMU = rot;
+}
+
+void ImuProcess::set_extrinsic2(const V3D &transl, const M3D &rot)
+{
+  Lidar_T_wrt_IMU_2 = transl;
+  Lidar_R_wrt_IMU_2 = rot;
+  dual_lidar_enabled = true;
+  std::cout << "[ImuProcess] LiDAR 2 extrinsics set - dual_lidar mode enabled" << std::endl;
+  std::cout << "  T_L2_I: [" << transl.x() << ", " << transl.y() << ", " << transl.z() << "]" << std::endl;
 }
 
 void ImuProcess::set_gyr_cov(const V3D &scaler)

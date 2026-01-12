@@ -1540,6 +1540,18 @@ public:
 
         // Set extrinsics for primary LiDAR (LiDAR 1) in IMU processor
         p_imu->set_extrinsic(Lidar_T_wrt_IMU_1, Lidar_R_wrt_IMU_1);
+
+        // Set extrinsics for LiDAR 2 (different lever arm from IMU)
+        // This is needed for proper motion compensation of L2 points
+        if (multi_lidar) {
+            p_imu->set_extrinsic2(Lidar_T_wrt_IMU_2, Lidar_R_wrt_IMU_2);
+            RCLCPP_INFO(this->get_logger(), "Dual-LiDAR extrinsics configured:");
+            RCLCPP_INFO(this->get_logger(), "  L1 -> IMU: T=[%.4f, %.4f, %.4f]",
+                       Lidar_T_wrt_IMU_1(0), Lidar_T_wrt_IMU_1(1), Lidar_T_wrt_IMU_1(2));
+            RCLCPP_INFO(this->get_logger(), "  L2 -> IMU: T=[%.4f, %.4f, %.4f]",
+                       Lidar_T_wrt_IMU_2(0), Lidar_T_wrt_IMU_2(1), Lidar_T_wrt_IMU_2(2));
+        }
+
         p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
         p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
         p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
