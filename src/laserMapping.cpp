@@ -53,6 +53,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -195,6 +196,14 @@ geometry_msgs::msg::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+
+static Eigen::Matrix4f build_lidar_to_imu_transform(const M3D &rotation, const V3D &translation)
+{
+    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+    transform.block<3, 3>(0, 0) = rotation.cast<float>();
+    transform.block<3, 1>(0, 3) = translation.cast<float>();
+    return transform;
+}
 
 void SigHandle(int sig)
 {
@@ -383,16 +392,8 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 
     // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    ptr_transformed->resize(ptr->size());
-    for (size_t i = 0; i < ptr->size(); i++)
-    {
-        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
-        V3D point_imu = Lidar_R_wrt_IMU_1 * point_lidar + Lidar_T_wrt_IMU_1;
-        ptr_transformed->points[i].x = point_imu.x();
-        ptr_transformed->points[i].y = point_imu.y();
-        ptr_transformed->points[i].z = point_imu.z();
-        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
-    }
+    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
+    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
 
     ptr_transformed->header.seq = lidar_id;
     lidar_buffer.push_back(ptr_transformed);
@@ -439,16 +440,8 @@ void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 
     // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    ptr_transformed->resize(ptr->size());
-    for (size_t i = 0; i < ptr->size(); i++)
-    {
-        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
-        V3D point_imu = Lidar_R_wrt_IMU_2 * point_lidar + Lidar_T_wrt_IMU_2;
-        ptr_transformed->points[i].x = point_imu.x();
-        ptr_transformed->points[i].y = point_imu.y();
-        ptr_transformed->points[i].z = point_imu.z();
-        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
-    }
+    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
+    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
 
     ptr_transformed->header.seq = lidar_id;
     lidar_buffer.push_back(ptr_transformed);
@@ -511,16 +504,8 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 
     // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    ptr_transformed->resize(ptr->size());
-    for (size_t i = 0; i < ptr->size(); i++)
-    {
-        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
-        V3D point_imu = Lidar_R_wrt_IMU_1 * point_lidar + Lidar_T_wrt_IMU_1;
-        ptr_transformed->points[i].x = point_imu.x();
-        ptr_transformed->points[i].y = point_imu.y();
-        ptr_transformed->points[i].z = point_imu.z();
-        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
-    }
+    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
+    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
 
     ptr_transformed->header.seq = lidar_id;
     lidar_buffer.push_back(ptr_transformed);
@@ -573,16 +558,8 @@ void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 
     // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    ptr_transformed->resize(ptr->size());
-    for (size_t i = 0; i < ptr->size(); i++)
-    {
-        V3D point_lidar(ptr->points[i].x, ptr->points[i].y, ptr->points[i].z);
-        V3D point_imu = Lidar_R_wrt_IMU_2 * point_lidar + Lidar_T_wrt_IMU_2;
-        ptr_transformed->points[i].x = point_imu.x();
-        ptr_transformed->points[i].y = point_imu.y();
-        ptr_transformed->points[i].z = point_imu.z();
-        ptr_transformed->points[i].intensity = ptr->points[i].intensity;
-    }
+    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
+    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
 
     ptr_transformed->header.seq = lidar_id;
     lidar_buffer.push_back(ptr_transformed);
@@ -1540,18 +1517,6 @@ public:
 
         // Set extrinsics for primary LiDAR (LiDAR 1) in IMU processor
         p_imu->set_extrinsic(Lidar_T_wrt_IMU_1, Lidar_R_wrt_IMU_1);
-
-        // Set extrinsics for LiDAR 2 (different lever arm from IMU)
-        // This is needed for proper motion compensation of L2 points
-        if (multi_lidar) {
-            p_imu->set_extrinsic2(Lidar_T_wrt_IMU_2, Lidar_R_wrt_IMU_2);
-            RCLCPP_INFO(this->get_logger(), "Dual-LiDAR extrinsics configured:");
-            RCLCPP_INFO(this->get_logger(), "  L1 -> IMU: T=[%.4f, %.4f, %.4f]",
-                       Lidar_T_wrt_IMU_1(0), Lidar_T_wrt_IMU_1(1), Lidar_T_wrt_IMU_1(2));
-            RCLCPP_INFO(this->get_logger(), "  L2 -> IMU: T=[%.4f, %.4f, %.4f]",
-                       Lidar_T_wrt_IMU_2(0), Lidar_T_wrt_IMU_2(1), Lidar_T_wrt_IMU_2(2));
-        }
-
         p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
         p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
         p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
