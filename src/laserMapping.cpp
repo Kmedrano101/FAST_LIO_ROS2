@@ -42,6 +42,7 @@
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
+#include <atomic>
 #include <Python.h>
 #include <so3_math.h>
 #include <rclcpp/rclcpp.hpp>
@@ -78,7 +79,8 @@ double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_ti
 double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_plot5[MAXN], s_plot6[MAXN], s_plot7[MAXN], s_plot8[MAXN], s_plot9[MAXN], s_plot10[MAXN], s_plot11[MAXN];
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
-bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+std::atomic<bool> runtime_pos_log{false};
+bool   pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
 bool   traj_save_en = false, async_debug = false;
 bool   s_plot_overflow_warned[2] = {false, false};
 bool   time_log_overflow_warned = false;
@@ -134,12 +136,14 @@ int imu_debug_counter = 0;           // Counter for debug log throttling
 double imu_acc_scale = 1.0;          // Scale factor for acceleration (9.80665 if in g units)
 Eigen::Matrix3d imu_R_transform = Eigen::Matrix3d::Identity();  // Rotation matrix for IMU transform
 
-double res_mean_last = 0.05, total_residual = 0.0;
+std::atomic<double> res_mean_last{0.05};
+double total_residual = 0.0;
 double last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
 double filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
-int    effct_feat_num = 0, time_log_counter = 0, publish_count = 0;
+std::atomic<int> effct_feat_num{0};
+int    time_log_counter = 0, publish_count = 0;
 int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
 bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
@@ -770,7 +774,9 @@ bool sync_packages_multi(MeasureGroup &meas)
             if (meas.lidar->header.seq == 1)
             {
                 // LiDAR2: transform to LiDAR1 frame
-                pcl::transformPointCloud(*meas.lidar, *meas.lidar, LiDAR2_wrt_LiDAR1);
+                PointCloudXYZI::Ptr transformed(new PointCloudXYZI());
+                pcl::transformPointCloud(*meas.lidar, *transformed, LiDAR2_wrt_LiDAR1);
+                meas.lidar = transformed;
                 current_lidar_num = 2;
                 if (async_debug) {
                     RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[ASYNC] Using LiDAR 2 scan");
@@ -1036,9 +1042,10 @@ void publish_frame_body(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shared
 
 void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect)
 {
+    const int effective_num = effct_feat_num.load(std::memory_order_relaxed);
     PointCloudXYZI::Ptr laserCloudWorld( \
-                    new PointCloudXYZI(effct_feat_num, 1));
-    for (int i = 0; i < effct_feat_num; i++)
+                    new PointCloudXYZI(effective_num, 1));
+    for (int i = 0; i < effective_num; i++)
     {
         RGBpointBodyToWorld(&laserCloudOri->points[i], \
                             &laserCloudWorld->points[i]);
@@ -1230,35 +1237,36 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         }
     }
     
-    effct_feat_num = 0;
+    int effective_num = 0;
 
     for (int i = 0; i < feats_limit; i++)
     {
         if (point_selected_surf[i])
         {
-            laserCloudOri->points[effct_feat_num] = feats_down_body->points[i];
-            corr_normvect->points[effct_feat_num] = normvec->points[i];
+            laserCloudOri->points[effective_num] = feats_down_body->points[i];
+            corr_normvect->points[effective_num] = normvec->points[i];
             total_residual += res_last[i];
-            effct_feat_num ++;
+            effective_num ++;
         }
     }
 
-    if (effct_feat_num < 1)
+    if (effective_num < 1)
     {
         ekfom_data.valid = false;
         std::cerr << "No Effective Points!" << std::endl;
         return;
     }
 
-    res_mean_last = total_residual / effct_feat_num;
+    effct_feat_num.store(effective_num, std::memory_order_relaxed);
+    res_mean_last.store(total_residual / effective_num, std::memory_order_relaxed);
     match_time  += omp_get_wtime() - match_start;
     double solve_start_  = omp_get_wtime();
     
     /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
-    ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 12); //23
-    ekfom_data.h.resize(effct_feat_num);
+    ekfom_data.h_x = MatrixXd::Zero(effective_num, 12); //23
+    ekfom_data.h.resize(effective_num);
 
-    for (int i = 0; i < effct_feat_num; i++)
+    for (int i = 0; i < effective_num; i++)
     {
         const PointType &laser_p  = laserCloudOri->points[i];
         V3D point_this_be(laser_p.x, laser_p.y, laser_p.z);
@@ -1427,7 +1435,9 @@ public:
         this->get_parameter_or<int>("preprocess.point_filter_num", p_pre->point_filter_num[LIDAR1], 2);
         this->get_parameter_or<int>("preprocess.point_filter_num2", p_pre->point_filter_num[LIDAR2], 2);
         this->get_parameter_or<bool>("feature_extract_enable", p_pre->feature_enabled, false);
-        this->get_parameter_or<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
+        bool runtime_pos_log_param = false;
+        this->get_parameter_or<bool>("runtime_pos_log_enable", runtime_pos_log_param, false);
+        runtime_pos_log.store(runtime_pos_log_param, std::memory_order_relaxed);
         this->get_parameter_or<bool>("mapping.extrinsic_est_en", extrinsic_est_en, true);
         this->get_parameter_or<bool>("pcd_save.pcd_save_en", pcd_save_en, false);
         this->get_parameter_or<string>("pcd_save.pcd_file_name", pcd_file_name, "pointclouds.pcd");
@@ -1762,7 +1772,7 @@ private:
             double t_update_end = omp_get_wtime();
 
             /*** Check adaptive mode and switch if needed ***/
-            check_adaptive_mode(feats_down_body, effct_feat_num);
+            check_adaptive_mode(feats_down_body, effct_feat_num.load(std::memory_order_relaxed));
 
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped_, tf_broadcaster_);
@@ -1796,7 +1806,7 @@ private:
             }
 
             /*** Debug variables ***/
-            if (runtime_pos_log)
+            if (runtime_pos_log.load(std::memory_order_relaxed))
             {
                 frame_num ++;
                 kdtree_size_end = ikdtree.size();
@@ -1916,7 +1926,7 @@ int main(int argc, char** argv)
     }
 
     /**************** save runtime log ****************/
-    if (runtime_pos_log)
+    if (runtime_pos_log.load(std::memory_order_relaxed))
     {
         vector<double> t, s_vec, s_vec2, s_vec3, s_vec4, s_vec5, s_vec6, s_vec7;    
         FILE *fp2;
