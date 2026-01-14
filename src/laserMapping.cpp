@@ -121,7 +121,16 @@ float DET_RANGE = 300.0f;
 const float MOV_THRESHOLD = 1.5f;
 double time_diff_lidar_to_imu = 0.0;
 
-mutex mtx_buffer;
+// Fine-grained locking: separate mutexes for different resources
+// to improve concurrency (fixes issue #52)
+std::mutex mtx_lidar_;  // Protects: lidar_buffer, time_buffer, scan_count[], last_timestamp_lidar[], is_first_lidar[]
+std::mutex mtx_imu_;    // Protects: imu_buffer, last_timestamp_imu
+std::condition_variable cv_data_ready_;  // Signaled when new sensor data arrives
+
+// Buffer size limits to prevent unbounded growth (fixes issue #47)
+// If processing is slower than input, old data is dropped to prevent memory exhaustion
+constexpr size_t MAX_LIDAR_BUFFER_SIZE = 100;  // ~10 seconds at 10Hz
+constexpr size_t MAX_IMU_BUFFER_SIZE = 2000;   // ~10 seconds at 200Hz
 
 string root_dir = ROOT_DIR;
 string map_file_path;
@@ -369,28 +378,10 @@ void lasermap_fov_segment()
 void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 {
     const int lidar_id = 0;
-    mtx_buffer.lock();
-    scan_count[lidar_id] ++;
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
 
-    // Log data reception for LiDAR 1
-    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
-                scan_count[lidar_id], cur_time, msg->width * msg->height);
-
-    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-    {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
-        lidar_buffer.clear();
-    }
-    if (is_first_lidar[lidar_id])
-    {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] First scan received!");
-        is_first_lidar[lidar_id] = false;
-    }
-
-    // Preprocess point cloud
+    // Preprocess point cloud outside lock (CPU-intensive work)
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
 
@@ -398,47 +389,58 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
     const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
     pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-
     ptr_transformed->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr_transformed);
-    time_buffer.push_back(cur_time);
-    last_timestamp_lidar[lidar_id] = cur_time;
-    if (scan_count[lidar_id] < MAXN) {
-        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-    } else if (!s_plot_overflow_warned[lidar_id]) {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                    lidar_id + 1, scan_count[lidar_id], MAXN);
-        s_plot_overflow_warned[lidar_id] = true;
+
+    {
+        std::lock_guard<std::mutex> lock(mtx_lidar_);
+        scan_count[lidar_id]++;
+
+        // Log data reception for LiDAR 1
+        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                    "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
+                    scan_count[lidar_id], cur_time, msg->width * msg->height);
+
+        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+        {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
+            lidar_buffer.clear();
+        }
+        if (is_first_lidar[lidar_id])
+        {
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] First scan received!");
+            is_first_lidar[lidar_id] = false;
+        }
+
+        // Prevent unbounded buffer growth (fixes issue #47)
+        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
+                "[LiDAR 1] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
+        }
+
+        lidar_buffer.push_back(ptr_transformed);
+        time_buffer.push_back(cur_time);
+        last_timestamp_lidar[lidar_id] = cur_time;
+        if (scan_count[lidar_id] < MAXN) {
+            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+        } else if (!s_plot_overflow_warned[lidar_id]) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                        lidar_id + 1, scan_count[lidar_id], MAXN);
+            s_plot_overflow_warned[lidar_id] = true;
+        }
     }
-    mtx_buffer.unlock();
+    cv_data_ready_.notify_one();
 }
 
 void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 {
     const int lidar_id = 1;
-    mtx_buffer.lock();
-    scan_count[lidar_id] ++;
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
 
-    // Log data reception for LiDAR 2
-    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
-                scan_count[lidar_id], cur_time, msg->width * msg->height);
-
-    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-    {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
-        lidar_buffer.clear();
-    }
-    if (is_first_lidar[lidar_id])
-    {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] First scan received!");
-        is_first_lidar[lidar_id] = false;
-    }
-
-    // Preprocess point cloud
+    // Preprocess point cloud outside lock (CPU-intensive work)
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
 
@@ -446,20 +448,49 @@ void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
     const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
     pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-
     ptr_transformed->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr_transformed);
-    time_buffer.push_back(cur_time);
-    last_timestamp_lidar[lidar_id] = cur_time;
-    if (scan_count[lidar_id] < MAXN) {
-        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-    } else if (!s_plot_overflow_warned[lidar_id]) {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                    lidar_id + 1, scan_count[lidar_id], MAXN);
-        s_plot_overflow_warned[lidar_id] = true;
+
+    {
+        std::lock_guard<std::mutex> lock(mtx_lidar_);
+        scan_count[lidar_id]++;
+
+        // Log data reception for LiDAR 2
+        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                    "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
+                    scan_count[lidar_id], cur_time, msg->width * msg->height);
+
+        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+        {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
+            lidar_buffer.clear();
+        }
+        if (is_first_lidar[lidar_id])
+        {
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] First scan received!");
+            is_first_lidar[lidar_id] = false;
+        }
+
+        // Prevent unbounded buffer growth (fixes issue #47)
+        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
+                "[LiDAR 2] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
+        }
+
+        lidar_buffer.push_back(ptr_transformed);
+        time_buffer.push_back(cur_time);
+        last_timestamp_lidar[lidar_id] = cur_time;
+        if (scan_count[lidar_id] < MAXN) {
+            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+        } else if (!s_plot_overflow_warned[lidar_id]) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                        lidar_id + 1, scan_count[lidar_id], MAXN);
+            s_plot_overflow_warned[lidar_id] = true;
+        }
     }
-    mtx_buffer.unlock();
+    cv_data_ready_.notify_one();
 }
 
 double timediff_lidar_wrt_imu = 0.0;
@@ -468,41 +499,10 @@ bool   timediff_set_flg = false;
 void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 {
     const int lidar_id = 0;
-    mtx_buffer.lock();
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
-    scan_count[lidar_id] ++;
 
-    // Log data reception for LiDAR 1
-    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
-                scan_count[lidar_id], cur_time);
-
-    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-    {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
-        lidar_buffer.clear();
-    }
-    if(is_first_lidar[lidar_id])
-    {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1 Livox] First scan received!");
-        is_first_lidar[lidar_id] = false;
-    }
-    last_timestamp_lidar[lidar_id] = cur_time;
-
-    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
-    {
-        printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
-    }
-
-    if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
-    {
-        timediff_set_flg = true;
-        timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
-        printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
-    }
-
-    // Preprocess point cloud
+    // Preprocess point cloud outside lock (CPU-intensive work)
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
 
@@ -510,53 +510,72 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
     const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
     pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-
     ptr_transformed->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr_transformed);
-    time_buffer.push_back(last_timestamp_lidar[lidar_id]);
 
-    if (scan_count[lidar_id] < MAXN) {
-        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-    } else if (!s_plot_overflow_warned[lidar_id]) {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                    lidar_id + 1, scan_count[lidar_id], MAXN);
-        s_plot_overflow_warned[lidar_id] = true;
+    // Time sync check requires both locks
+    {
+        std::scoped_lock lock(mtx_lidar_, mtx_imu_);
+        scan_count[lidar_id]++;
+
+        // Log data reception for LiDAR 1
+        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                    "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
+                    scan_count[lidar_id], cur_time);
+
+        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+        {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
+            lidar_buffer.clear();
+        }
+        if(is_first_lidar[lidar_id])
+        {
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1 Livox] First scan received!");
+            is_first_lidar[lidar_id] = false;
+        }
+        last_timestamp_lidar[lidar_id] = cur_time;
+
+        if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+        {
+            printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+        }
+
+        if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
+        {
+            timediff_set_flg = true;
+            timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
+            printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
+        }
+
+        // Prevent unbounded buffer growth (fixes issue #47)
+        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
+                "[LiDAR 1 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
+        }
+
+        lidar_buffer.push_back(ptr_transformed);
+        time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
+        if (scan_count[lidar_id] < MAXN) {
+            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+        } else if (!s_plot_overflow_warned[lidar_id]) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                        lidar_id + 1, scan_count[lidar_id], MAXN);
+            s_plot_overflow_warned[lidar_id] = true;
+        }
     }
-    mtx_buffer.unlock();
+    cv_data_ready_.notify_one();
 }
 
 void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 {
     const int lidar_id = 1;
-    mtx_buffer.lock();
     double cur_time = get_time_sec(msg->header.stamp);
     double preprocess_start_time = omp_get_wtime();
-    scan_count[lidar_id] ++;
 
-    // Log data reception for LiDAR 2
-    RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
-                scan_count[lidar_id], cur_time);
-
-    if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-    {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
-        lidar_buffer.clear();
-    }
-    if(is_first_lidar[lidar_id])
-    {
-        RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2 Livox] First scan received!");
-        is_first_lidar[lidar_id] = false;
-    }
-    last_timestamp_lidar[lidar_id] = cur_time;
-
-    if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
-    {
-        printf("IMU and LiDAR 2 not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
-    }
-
-    // Preprocess point cloud
+    // Preprocess point cloud outside lock (CPU-intensive work)
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr, lidar_id);
 
@@ -564,20 +583,56 @@ void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
     PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
     const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
     pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-
     ptr_transformed->header.seq = lidar_id;
-    lidar_buffer.push_back(ptr_transformed);
-    time_buffer.push_back(last_timestamp_lidar[lidar_id]);
 
-    if (scan_count[lidar_id] < MAXN) {
-        s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-    } else if (!s_plot_overflow_warned[lidar_id]) {
-        RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                    "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                    lidar_id + 1, scan_count[lidar_id], MAXN);
-        s_plot_overflow_warned[lidar_id] = true;
+    // Time sync check requires both locks
+    {
+        std::scoped_lock lock(mtx_lidar_, mtx_imu_);
+        scan_count[lidar_id]++;
+
+        // Log data reception for LiDAR 2
+        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
+                    "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
+                    scan_count[lidar_id], cur_time);
+
+        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+        {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
+            lidar_buffer.clear();
+        }
+        if(is_first_lidar[lidar_id])
+        {
+            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2 Livox] First scan received!");
+            is_first_lidar[lidar_id] = false;
+        }
+        last_timestamp_lidar[lidar_id] = cur_time;
+
+        if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+        {
+            printf("IMU and LiDAR 2 not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+        }
+
+        // Prevent unbounded buffer growth (fixes issue #47)
+        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
+                "[LiDAR 2 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
+        }
+
+        lidar_buffer.push_back(ptr_transformed);
+        time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
+        if (scan_count[lidar_id] < MAXN) {
+            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+        } else if (!s_plot_overflow_warned[lidar_id]) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                        lidar_id + 1, scan_count[lidar_id], MAXN);
+            s_plot_overflow_warned[lidar_id] = true;
+        }
     }
-    mtx_buffer.unlock();
+    cv_data_ready_.notify_one();
 }
 #endif
 void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
@@ -653,24 +708,40 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
 
     double timestamp = get_time_sec(msg->header.stamp);
 
-    mtx_buffer.lock();
-
-    if (timestamp < last_timestamp_imu)
     {
-        std::cerr << "lidar loop back, clear buffer" << std::endl;
-        imu_buffer.clear();
+        std::lock_guard<std::mutex> lock(mtx_imu_);
+
+        if (timestamp < last_timestamp_imu)
+        {
+            std::cerr << "imu loop back, clear buffer" << std::endl;
+            imu_buffer.clear();
+        }
+
+        // Prevent unbounded buffer growth (fixes issue #47)
+        if (imu_buffer.size() >= MAX_IMU_BUFFER_SIZE) {
+            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
+                "[IMU] Buffer full (%zu), dropping oldest samples", imu_buffer.size());
+            // Drop multiple old samples to catch up
+            size_t to_drop = imu_buffer.size() / 10;  // Drop 10% to recover
+            for (size_t i = 0; i < to_drop && !imu_buffer.empty(); i++) {
+                imu_buffer.pop_front();
+            }
+        }
+
+        last_timestamp_imu = timestamp;
+        imu_buffer.push_back(msg);
     }
-
-    last_timestamp_imu = timestamp;
-
-    imu_buffer.push_back(msg);
-    mtx_buffer.unlock();
+    cv_data_ready_.notify_one();
 }
 
 double lidar_mean_scantime = 0.0;
 int    scan_num = 0;
 bool sync_packages_multi(MeasureGroup &meas)
 {
+    // Lock both mutexes atomically to prevent deadlock (fixes issue #52)
+    // This function accesses both lidar and IMU buffers
+    std::scoped_lock lock(mtx_lidar_, mtx_imu_);
+
     if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
     }
