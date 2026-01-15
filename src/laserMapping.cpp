@@ -1624,14 +1624,18 @@ public:
             cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
         /*** ROS subscribe initialization ***/
+        // Helper lambda to check if lidar type supports CustomMsg
+        auto is_livox_custom_msg_type = [](int type) {
+            return (type == AVIA || type == MID360);
+        };
+
         if (!multi_lidar)
         {
             // Single lidar setup
-            // NOTE: Only AVIA (lidar_type=1) supports CustomMsg format
-            // MID360 (lidar_type=4) uses PointCloud2 format
-            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            // NOTE: AVIA (lidar_type=1) and MID360 (lidar_type=4) support CustomMsg format
+            if (is_livox_custom_msg_type(p_pre->lidar_type[LIDAR1]))
             {
-                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livox CustomMsg type (AVIA only).");
+                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livox CustomMsg type (AVIA/MID360).");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR1], 20, livox_pcl_cbk);
@@ -1642,7 +1646,7 @@ public:
             }
             else
             {
-                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with PointCloud2 type (MID360, Velodyne, Ouster, etc.).");
+                RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with PointCloud2 type (Velodyne, Ouster, etc.).");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR1], 20, standard_pcl_cbk);
             }
@@ -1657,13 +1661,12 @@ public:
             RCLCPP_INFO(this->get_logger(), "Using Dual LiDAR setup");
 
             // Multi-lidar setup
-            // NOTE: Only AVIA (lidar_type=1) supports CustomMsg format
-            // MID360 (lidar_type=4) uses PointCloud2 format
+            // NOTE: AVIA (lidar_type=1) and MID360 (lidar_type=4) support CustomMsg format
 
             // --- Lidar 1 ---
-            if (p_pre->lidar_type[LIDAR1] == AVIA)
+            if (is_livox_custom_msg_type(p_pre->lidar_type[LIDAR1]))
             {
-                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using Livox CustomMsg format (AVIA)");
+                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using Livox CustomMsg format (AVIA/MID360)");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR1], 20, livox_pcl_cbk);
@@ -1674,15 +1677,15 @@ public:
             }
             else
             {
-                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using PointCloud2 format (MID360, etc.)");
+                RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using PointCloud2 format (Velodyne, Ouster, etc.)");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR1], 20, standard_pcl_cbk);
             }
 
             // --- Lidar 2 ---
-            if (p_pre->lidar_type[LIDAR2] == AVIA)
+            if (is_livox_custom_msg_type(p_pre->lidar_type[LIDAR2]))
             {
-                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using Livox CustomMsg format (AVIA)");
+                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using Livox CustomMsg format (AVIA/MID360)");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox2_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
                     lid_topic[LIDAR2], 20, livox_pcl_cbk2);
@@ -1693,7 +1696,7 @@ public:
             }
             else
             {
-                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using PointCloud2 format (MID360, etc.)");
+                RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using PointCloud2 format (Velodyne, Ouster, etc.)");
                 sub_pcl_pc2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                     lid_topic[LIDAR2], 20, standard_pcl_cbk2);
             }
