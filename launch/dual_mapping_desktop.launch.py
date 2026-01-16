@@ -35,7 +35,7 @@ def generate_launch_description():
     # LAUNCH ARGUMENTS
     # ==========================================================================
     use_sim_time = LaunchConfiguration('use_sim_time')
-    rviz_cfg = LaunchConfiguration('rviz_cfg')
+    rviz_cfg = LaunchConfiguration('rviz')
 
     # Argument: use_sim_time
     # Set to 'false' for real hardware, 'true' for Gazebo simulation
@@ -46,9 +46,9 @@ def generate_launch_description():
     )
 
     # Argument: rviz_cfg
-    # RViz configuration file path
+    # RViz configuration file pathk
     declare_rviz_config_path_cmd = DeclareLaunchArgument(
-        'rviz_cfg',
+        'rviz',
         default_value=default_rviz_config_path,
         description='RViz configuration file path (default: fastlio.rviz with dual LiDAR support)'
     )
