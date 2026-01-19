@@ -50,7 +50,7 @@ find_package(OpenMP QUIET)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
 
-find_package(PythonLibs REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Development)
 find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h")
 
 # ROS dependencies
@@ -113,8 +113,8 @@ target_include_directories(fastlio_mapping PUBLIC
   ${PCL_INCLUDE_DIRS}
 )
 
-target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} Eigen3::Eigen)
-target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+target_link_libraries(fastlio_mapping ${PCL_LIBRARIES} ${Python3_LIBRARIES} Eigen3::Eigen)
+target_include_directories(fastlio_mapping PRIVATE ${Python3_INCLUDE_DIRS})
 
 if(livox_ros_driver2_FOUND)
   target_compile_definitions(fastlio_mapping PRIVATE USE_LIVOX_DRIVER2)

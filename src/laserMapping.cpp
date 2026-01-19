@@ -375,364 +375,8 @@ void lasermap_fov_segment()
     kdtree_delete_time = omp_get_wtime() - delete_begin;
 }
 
-void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
-{
-    const int lidar_id = 0;
-    double cur_time = get_time_sec(msg->header.stamp);
-    double preprocess_start_time = omp_get_wtime();
-
-    // Preprocess point cloud outside lock (CPU-intensive work)
-    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr, lidar_id);
-
-    // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
-    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
-    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-    ptr_transformed->header.seq = lidar_id;
-
-    {
-        std::lock_guard<std::mutex> lock(mtx_lidar_);
-        scan_count[lidar_id]++;
-
-        // Log data reception for LiDAR 1
-        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                    "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
-                    scan_count[lidar_id], cur_time, msg->width * msg->height);
-
-        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-        {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
-            lidar_buffer.clear();
-        }
-        if (is_first_lidar[lidar_id])
-        {
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] First scan received!");
-            is_first_lidar[lidar_id] = false;
-        }
-
-        // Prevent unbounded buffer growth (fixes issue #47)
-        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
-            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
-                "[LiDAR 1] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
-            lidar_buffer.pop_front();
-            time_buffer.pop_front();
-        }
-
-        lidar_buffer.push_back(ptr_transformed);
-        time_buffer.push_back(cur_time);
-        last_timestamp_lidar[lidar_id] = cur_time;
-        if (scan_count[lidar_id] < MAXN) {
-            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-        } else if (!s_plot_overflow_warned[lidar_id]) {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                        lidar_id + 1, scan_count[lidar_id], MAXN);
-            s_plot_overflow_warned[lidar_id] = true;
-        }
-    }
-    cv_data_ready_.notify_one();
-}
-
-void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
-{
-    const int lidar_id = 1;
-    double cur_time = get_time_sec(msg->header.stamp);
-    double preprocess_start_time = omp_get_wtime();
-
-    // Preprocess point cloud outside lock (CPU-intensive work)
-    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr, lidar_id);
-
-    // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
-    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
-    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-    ptr_transformed->header.seq = lidar_id;
-
-    {
-        std::lock_guard<std::mutex> lock(mtx_lidar_);
-        scan_count[lidar_id]++;
-
-        // Log data reception for LiDAR 2
-        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                    "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
-                    scan_count[lidar_id], cur_time, msg->width * msg->height);
-
-        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-        {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
-            lidar_buffer.clear();
-        }
-        if (is_first_lidar[lidar_id])
-        {
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] First scan received!");
-            is_first_lidar[lidar_id] = false;
-        }
-
-        // Prevent unbounded buffer growth (fixes issue #47)
-        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
-            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
-                "[LiDAR 2] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
-            lidar_buffer.pop_front();
-            time_buffer.pop_front();
-        }
-
-        lidar_buffer.push_back(ptr_transformed);
-        time_buffer.push_back(cur_time);
-        last_timestamp_lidar[lidar_id] = cur_time;
-        if (scan_count[lidar_id] < MAXN) {
-            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-        } else if (!s_plot_overflow_warned[lidar_id]) {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                        lidar_id + 1, scan_count[lidar_id], MAXN);
-            s_plot_overflow_warned[lidar_id] = true;
-        }
-    }
-    cv_data_ready_.notify_one();
-}
-
 double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
-#ifdef USE_LIVOX_DRIVER2
-void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
-{
-    const int lidar_id = 0;
-    double cur_time = get_time_sec(msg->header.stamp);
-    double preprocess_start_time = omp_get_wtime();
-
-    // Preprocess point cloud outside lock (CPU-intensive work)
-    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr, lidar_id);
-
-    // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
-    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
-    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-    ptr_transformed->header.seq = lidar_id;
-
-    // Time sync check requires both locks
-    {
-        std::scoped_lock lock(mtx_lidar_, mtx_imu_);
-        scan_count[lidar_id]++;
-
-        // Log data reception for LiDAR 1
-        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                    "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
-                    scan_count[lidar_id], cur_time);
-
-        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-        {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 1] Loop back detected, clearing buffer");
-            lidar_buffer.clear();
-        }
-        if(is_first_lidar[lidar_id])
-        {
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 1 Livox] First scan received!");
-            is_first_lidar[lidar_id] = false;
-        }
-        last_timestamp_lidar[lidar_id] = cur_time;
-
-        if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
-        {
-            printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
-        }
-
-        if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
-        {
-            timediff_set_flg = true;
-            timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
-            printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
-        }
-
-        // Prevent unbounded buffer growth (fixes issue #47)
-        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
-            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
-                "[LiDAR 1 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
-            lidar_buffer.pop_front();
-            time_buffer.pop_front();
-        }
-
-        lidar_buffer.push_back(ptr_transformed);
-        time_buffer.push_back(last_timestamp_lidar[lidar_id]);
-
-        if (scan_count[lidar_id] < MAXN) {
-            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-        } else if (!s_plot_overflow_warned[lidar_id]) {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                        lidar_id + 1, scan_count[lidar_id], MAXN);
-            s_plot_overflow_warned[lidar_id] = true;
-        }
-    }
-    cv_data_ready_.notify_one();
-}
-
-void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
-{
-    const int lidar_id = 1;
-    double cur_time = get_time_sec(msg->header.stamp);
-    double preprocess_start_time = omp_get_wtime();
-
-    // Preprocess point cloud outside lock (CPU-intensive work)
-    PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr, lidar_id);
-
-    // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
-    PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
-    const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
-    pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
-    ptr_transformed->header.seq = lidar_id;
-
-    // Time sync check requires both locks
-    {
-        std::scoped_lock lock(mtx_lidar_, mtx_imu_);
-        scan_count[lidar_id]++;
-
-        // Log data reception for LiDAR 2
-        RCLCPP_INFO_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 5000,
-                    "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
-                    scan_count[lidar_id], cur_time);
-
-        if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
-        {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"), "[LiDAR 2] Loop back detected, clearing buffer");
-            lidar_buffer.clear();
-        }
-        if(is_first_lidar[lidar_id])
-        {
-            RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "[LiDAR 2 Livox] First scan received!");
-            is_first_lidar[lidar_id] = false;
-        }
-        last_timestamp_lidar[lidar_id] = cur_time;
-
-        if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
-        {
-            printf("IMU and LiDAR 2 not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
-        }
-
-        // Prevent unbounded buffer growth (fixes issue #47)
-        if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
-            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
-                "[LiDAR 2 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
-            lidar_buffer.pop_front();
-            time_buffer.pop_front();
-        }
-
-        lidar_buffer.push_back(ptr_transformed);
-        time_buffer.push_back(last_timestamp_lidar[lidar_id]);
-
-        if (scan_count[lidar_id] < MAXN) {
-            s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
-        } else if (!s_plot_overflow_warned[lidar_id]) {
-            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
-                        "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
-                        lidar_id + 1, scan_count[lidar_id], MAXN);
-            s_plot_overflow_warned[lidar_id] = true;
-        }
-    }
-    cv_data_ready_.notify_one();
-}
-#endif
-void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
-{
-    publish_count ++;
-    // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
-    sensor_msgs::msg::Imu::SharedPtr msg(new sensor_msgs::msg::Imu(*msg_in));
-
-    // Apply IMU transformation if enabled
-    if (imu_transform_enabled)
-    {
-        // Transform linear acceleration (apply scale and rotation)
-        Eigen::Vector3d acc(msg_in->linear_acceleration.x * imu_acc_scale,
-                           msg_in->linear_acceleration.y * imu_acc_scale,
-                           msg_in->linear_acceleration.z * imu_acc_scale);
-        Eigen::Vector3d acc_t = imu_R_transform * acc;
-        msg->linear_acceleration.x = acc_t.x();
-        msg->linear_acceleration.y = acc_t.y();
-        msg->linear_acceleration.z = acc_t.z();
-
-        // Transform angular velocity (rotation only)
-        Eigen::Vector3d gyro(msg_in->angular_velocity.x,
-                            msg_in->angular_velocity.y,
-                            msg_in->angular_velocity.z);
-        Eigen::Vector3d gyro_t = imu_R_transform * gyro;
-        msg->angular_velocity.x = gyro_t.x();
-        msg->angular_velocity.y = gyro_t.y();
-        msg->angular_velocity.z = gyro_t.z();
-
-        // Debug logging (throttled to ~1Hz to avoid flooding)
-        if (imu_transform_debug && (++imu_debug_counter % 200 == 0))
-        {
-            double acc_raw_mag = std::sqrt(msg_in->linear_acceleration.x * msg_in->linear_acceleration.x +
-                                           msg_in->linear_acceleration.y * msg_in->linear_acceleration.y +
-                                           msg_in->linear_acceleration.z * msg_in->linear_acceleration.z);
-            double acc_t_mag = acc_t.norm();
-
-            std::cout << "\n[IMU Transform Debug] ----------------------------------------" << std::endl;
-            std::cout << "  RAW  Acc: [" << std::fixed << std::setprecision(4)
-                      << msg_in->linear_acceleration.x << ", "
-                      << msg_in->linear_acceleration.y << ", "
-                      << msg_in->linear_acceleration.z << "] mag=" << acc_raw_mag << " (g units)" << std::endl;
-            std::cout << "  XFRM Acc: [" << acc_t.x() << ", " << acc_t.y() << ", " << acc_t.z()
-                      << "] mag=" << acc_t_mag << " (after scale=" << imu_acc_scale << ")" << std::endl;
-            std::cout << "  RAW  Gyr: [" << msg_in->angular_velocity.x << ", "
-                      << msg_in->angular_velocity.y << ", "
-                      << msg_in->angular_velocity.z << "] rad/s" << std::endl;
-            std::cout << "  XFRM Gyr: [" << gyro_t.x() << ", " << gyro_t.y() << ", " << gyro_t.z()
-                      << "] rad/s" << std::endl;
-
-            // Identify gravity axis
-            std::string grav_axis_raw = "?", grav_axis_xfrm = "?";
-            if (std::abs(msg_in->linear_acceleration.x) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.x > 0) ? "+X" : "-X";
-            else if (std::abs(msg_in->linear_acceleration.y) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.y > 0) ? "+Y" : "-Y";
-            else if (std::abs(msg_in->linear_acceleration.z) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.z > 0) ? "+Z" : "-Z";
-
-            if (std::abs(acc_t.x()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.x() > 0) ? "+X" : "-X";
-            else if (std::abs(acc_t.y()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.y() > 0) ? "+Y" : "-Y";
-            else if (std::abs(acc_t.z()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.z() > 0) ? "+Z" : "-Z";
-
-            std::cout << "  Gravity: RAW=" << grav_axis_raw << " → TRANSFORMED=" << grav_axis_xfrm
-                      << " (expect +Y → +Z)" << std::endl;
-            std::cout << "-----------------------------------------------------------\n" << std::endl;
-        }
-    }
-
-    msg->header.stamp = get_ros_time(get_time_sec(msg_in->header.stamp) - time_diff_lidar_to_imu);
-    if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
-    {
-        msg->header.stamp = \
-        rclcpp::Time(timediff_lidar_wrt_imu + get_time_sec(msg_in->header.stamp));
-    }
-
-    double timestamp = get_time_sec(msg->header.stamp);
-
-    {
-        std::lock_guard<std::mutex> lock(mtx_imu_);
-
-        if (timestamp < last_timestamp_imu)
-        {
-            std::cerr << "imu loop back, clear buffer" << std::endl;
-            imu_buffer.clear();
-        }
-
-        // Prevent unbounded buffer growth (fixes issue #47)
-        if (imu_buffer.size() >= MAX_IMU_BUFFER_SIZE) {
-            RCLCPP_WARN_THROTTLE(rclcpp::get_logger("laser_mapping"), *log_clock, 1000,
-                "[IMU] Buffer full (%zu), dropping oldest samples", imu_buffer.size());
-            // Drop multiple old samples to catch up
-            size_t to_drop = imu_buffer.size() / 10;  // Drop 10% to recover
-            for (size_t i = 0; i < to_drop && !imu_buffer.empty(); i++) {
-                imu_buffer.pop_front();
-            }
-        }
-
-        last_timestamp_imu = timestamp;
-        imu_buffer.push_back(msg);
-    }
-    cv_data_ready_.notify_one();
-}
 
 double lidar_mean_scantime = 0.0;
 int    scan_num = 0;
@@ -1401,7 +1045,170 @@ void save_trajectory(const std::string &traj_file) {
 class LaserMappingNode : public rclcpp::Node
 {
 public:
+    // Lifecycle-like states for hybrid approach (issue #42)
+    enum class NodeState {
+        UNCONFIGURED,
+        CONFIGURED,
+        ACTIVE,
+        INACTIVE,
+        SHUTDOWN
+    };
+
     LaserMappingNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions()) : Node("laser_mapping", options)
+    {
+        RCLCPP_INFO(this->get_logger(), "Initializing LaserMappingNode...");
+
+        // Lifecycle-like initialization sequence
+        if (!on_configure()) {
+            RCLCPP_ERROR(this->get_logger(), "Configuration failed!");
+            throw std::runtime_error("Node configuration failed");
+        }
+
+        if (!on_activate()) {
+            RCLCPP_ERROR(this->get_logger(), "Activation failed!");
+            throw std::runtime_error("Node activation failed");
+        }
+
+        RCLCPP_INFO(this->get_logger(), "Node fully initialized and active.");
+    }
+
+    ~LaserMappingNode()
+    {
+        on_deactivate();
+        on_cleanup();
+        on_shutdown();
+    }
+
+    // Get current node state
+    NodeState get_state() const { return node_state_; }
+
+    //==========================================================================
+    // Lifecycle-like methods (hybrid approach - compatible with regular Node)
+    //==========================================================================
+
+    /**
+     * @brief Configure the node - declare and load parameters
+     * @return true if configuration succeeded
+     */
+    bool on_configure()
+    {
+        if (node_state_ != NodeState::UNCONFIGURED) {
+            RCLCPP_WARN(this->get_logger(), "on_configure called in invalid state");
+            return false;
+        }
+
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Configuring...");
+
+        // Declare all parameters
+        declare_parameters();
+
+        // Load parameter values
+        load_parameters();
+
+        // Initialize data structures
+        initialize_data_structures();
+
+        node_state_ = NodeState::CONFIGURED;
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Configuration complete.");
+        return true;
+    }
+
+    /**
+     * @brief Activate the node - create publishers, subscribers, timers
+     * @return true if activation succeeded
+     */
+    bool on_activate()
+    {
+        if (node_state_ != NodeState::CONFIGURED && node_state_ != NodeState::INACTIVE) {
+            RCLCPP_WARN(this->get_logger(), "on_activate called in invalid state");
+            return false;
+        }
+
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Activating...");
+
+        // Create publishers
+        create_publishers();
+
+        // Create subscribers
+        create_subscribers();
+
+        // Create timers and services
+        create_timers_and_services();
+
+        node_state_ = NodeState::ACTIVE;
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Node is now ACTIVE.");
+        return true;
+    }
+
+    /**
+     * @brief Deactivate the node - stop processing but keep configuration
+     * @return true if deactivation succeeded
+     */
+    bool on_deactivate()
+    {
+        if (node_state_ != NodeState::ACTIVE) {
+            return true;  // Already inactive
+        }
+
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Deactivating...");
+
+        // Stop timers
+        if (timer_) timer_->cancel();
+        if (map_pub_timer_) map_pub_timer_->cancel();
+
+        node_state_ = NodeState::INACTIVE;
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Node is now INACTIVE.");
+        return true;
+    }
+
+    /**
+     * @brief Cleanup resources - release memory, close files
+     * @return true if cleanup succeeded
+     */
+    bool on_cleanup()
+    {
+        if (node_state_ == NodeState::ACTIVE) {
+            on_deactivate();
+        }
+
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Cleaning up...");
+
+        // Close file handles
+        if (fout_out.is_open()) fout_out.close();
+        if (fout_pre.is_open()) fout_pre.close();
+        if (fout_dbg.is_open()) fout_dbg.close();
+        if (fp != nullptr) {
+            fclose(fp);
+            fp = nullptr;
+        }
+
+        node_state_ = NodeState::UNCONFIGURED;
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Cleanup complete.");
+        return true;
+    }
+
+    /**
+     * @brief Shutdown the node - final cleanup before destruction
+     * @return true if shutdown succeeded
+     */
+    bool on_shutdown()
+    {
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Shutting down...");
+
+        node_state_ = NodeState::SHUTDOWN;
+        RCLCPP_INFO(this->get_logger(), "[Lifecycle] Shutdown complete.");
+        return true;
+    }
+
+private:
+    // Current lifecycle state
+    NodeState node_state_ = NodeState::UNCONFIGURED;
+
+    //==========================================================================
+    // Lifecycle helper methods
+    //==========================================================================
+
+    void declare_parameters()
     {
         this->declare_parameter<bool>("publish.path_en", true);
         this->declare_parameter<bool>("publish.scan_publish_en", true);
@@ -1421,8 +1228,8 @@ public:
         this->declare_parameter<bool>("common.time_sync_en", false);
         this->declare_parameter<double>("common.time_offset_lidar_to_imu", 0.0);
         this->declare_parameter<double>("filter_size_corner", 0.5);
-        this->declare_parameter<double>("filter_size_surf", 0.5);
-        this->declare_parameter<double>("filter_size_map", 0.5);
+        this->declare_parameter<double>("filter_size_surf", 0.2);
+        this->declare_parameter<double>("filter_size_map", 0.2);
         this->declare_parameter<double>("cube_side_length", 200.);
         this->declare_parameter<float>("mapping.det_range", 300.);
         this->declare_parameter<double>("mapping.fov_degree", 180.);
@@ -1466,7 +1273,10 @@ public:
 
         this->declare_parameter<bool>("traj_save.traj_save_en", false);
         this->declare_parameter<string>("traj_save.traj_file_path", "");
+    }
 
+    void load_parameters()
+    {
         this->get_parameter_or<bool>("publish.path_en", path_en, true);
         this->get_parameter_or<bool>("publish.scan_publish_en", scan_pub_en, true);
         this->get_parameter_or<bool>("publish.dense_publish_en", dense_pub_en, true);
@@ -1484,8 +1294,8 @@ public:
         this->get_parameter_or<string>("common.body_frame", body_frame, "body");
         this->get_parameter_or<bool>("common.time_sync_en", time_sync_en, false);
         this->get_parameter_or<double>("common.time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
-        this->get_parameter_or<double>("filter_size_surf",filter_size_surf_min,0.5);
-        this->get_parameter_or<double>("filter_size_map",filter_size_map_min,0.5);
+        this->get_parameter_or<double>("filter_size_surf",filter_size_surf_min,0.2);
+        this->get_parameter_or<double>("filter_size_map",filter_size_map_min,0.2);
         this->get_parameter_or<double>("cube_side_length",cube_len,200.f);
         this->get_parameter_or<float>("mapping.det_range",DET_RANGE,300.f);
         this->get_parameter_or<double>("mapping.fov_degree",fov_deg,180.f);
@@ -1497,6 +1307,15 @@ public:
         this->get_parameter_or<double>("preprocess.blind2", p_pre->blind[LIDAR2], 0.01);
         this->get_parameter_or<int>("preprocess.lidar_type", p_pre->lidar_type[LIDAR1], MID360);
         this->get_parameter_or<int>("preprocess.lidar_type2", p_pre->lidar_type[LIDAR2], MID360);
+        // Validate lidar_type parameters (valid range: 1=AVIA, 2=VELO16, 3=OUST64, 4=MID360, 5=GAZEBOSIM)
+        if (p_pre->lidar_type[LIDAR1] < 1 || p_pre->lidar_type[LIDAR1] > 5) {
+            RCLCPP_ERROR(this->get_logger(), "Invalid lidar_type: %d. Must be 1-5 (AVIA=1, VELO16=2, OUST64=3, MID360=4, GAZEBOSIM=5)", p_pre->lidar_type[LIDAR1]);
+            throw std::invalid_argument("preprocess.lidar_type must be 1-5");
+        }
+        if (p_pre->lidar_type[LIDAR2] < 1 || p_pre->lidar_type[LIDAR2] > 5) {
+            RCLCPP_ERROR(this->get_logger(), "Invalid lidar_type2: %d. Must be 1-5 (AVIA=1, VELO16=2, OUST64=3, MID360=4, GAZEBOSIM=5)", p_pre->lidar_type[LIDAR2]);
+            throw std::invalid_argument("preprocess.lidar_type2 must be 1-5");
+        }
         this->get_parameter_or<int>("preprocess.scan_line", p_pre->N_SCANS[LIDAR1], 16);
         this->get_parameter_or<int>("preprocess.scan_line2", p_pre->N_SCANS[LIDAR2], 16);
         this->get_parameter_or<int>("preprocess.timestamp_unit", p_pre->time_unit[LIDAR1], US);
@@ -1572,7 +1391,10 @@ public:
                            voxelized_pt_num_thres, effect_pt_num_ratio_thres);
             }
         }
+    }
 
+    void initialize_data_structures()
+    {
         path.header.stamp = this->get_clock()->now();
         path.header.frame_id = map_frame;
 
@@ -1622,8 +1444,28 @@ public:
             cout << "~~~~"<<ROOT_DIR<<" file opened" << endl;
         else
             cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
+    }
 
+    void create_subscribers()
+    {
         /*** ROS subscribe initialization ***/
+
+        // QoS profiles for sensor data (issue #41)
+        // LiDAR: BestEffort + Volatile for high-frequency point cloud data
+        // - BestEffort: acceptable to drop messages under load (prefer low latency)
+        // - Volatile: no need for late-joining subscribers to receive old data
+        auto lidar_qos = rclcpp::QoS(rclcpp::KeepLast(20))
+            .reliability(rclcpp::ReliabilityPolicy::BestEffort)
+            .durability(rclcpp::DurabilityPolicy::Volatile);
+
+        // IMU: BestEffort + Volatile for high-frequency IMU data
+        // Higher queue depth to handle IMU's higher frequency (~200Hz vs ~10Hz for LiDAR)
+        auto imu_qos = rclcpp::QoS(rclcpp::KeepLast(200))
+            .reliability(rclcpp::ReliabilityPolicy::BestEffort)
+            .durability(rclcpp::DurabilityPolicy::Volatile);
+
+        RCLCPP_INFO(this->get_logger(), "QoS: LiDAR=BestEffort/Volatile(20), IMU=BestEffort/Volatile(200)");
+
         // Helper lambda to check if lidar type supports CustomMsg
         auto is_livox_custom_msg_type = [](int type) {
             return (type == AVIA || type == MID360);
@@ -1638,7 +1480,7 @@ public:
                 RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with Livox CustomMsg type (AVIA/MID360).");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-                    lid_topic[LIDAR1], 20, livox_pcl_cbk);
+                    lid_topic[LIDAR1], lidar_qos, std::bind(&LaserMappingNode::livox_pcl_cbk, this, std::placeholders::_1));
 #else
                 RCLCPP_WARN(this->get_logger(),
                             "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type to a supported type.");
@@ -1648,7 +1490,7 @@ public:
             {
                 RCLCPP_INFO(this->get_logger(), "Using Single LiDAR setup with PointCloud2 type (Velodyne, Ouster, etc.).");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                    lid_topic[LIDAR1], 20, standard_pcl_cbk);
+                    lid_topic[LIDAR1], lidar_qos, std::bind(&LaserMappingNode::standard_pcl_cbk, this, std::placeholders::_1));
             }
         }
         else
@@ -1669,7 +1511,7 @@ public:
                 RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using Livox CustomMsg format (AVIA/MID360)");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-                    lid_topic[LIDAR1], 20, livox_pcl_cbk);
+                    lid_topic[LIDAR1], lidar_qos, std::bind(&LaserMappingNode::livox_pcl_cbk, this, std::placeholders::_1));
 #else
                 RCLCPP_WARN(this->get_logger(),
                             "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type to a supported type.");
@@ -1679,7 +1521,7 @@ public:
             {
                 RCLCPP_INFO(this->get_logger(), "LiDAR 1: Using PointCloud2 format (Velodyne, Ouster, etc.)");
                 sub_pcl_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                    lid_topic[LIDAR1], 20, standard_pcl_cbk);
+                    lid_topic[LIDAR1], lidar_qos, std::bind(&LaserMappingNode::standard_pcl_cbk, this, std::placeholders::_1));
             }
 
             // --- Lidar 2 ---
@@ -1688,7 +1530,7 @@ public:
                 RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using Livox CustomMsg format (AVIA/MID360)");
 #ifdef USE_LIVOX_DRIVER2
                 sub_pcl_livox2_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-                    lid_topic[LIDAR2], 20, livox_pcl_cbk2);
+                    lid_topic[LIDAR2], lidar_qos, std::bind(&LaserMappingNode::livox_pcl_cbk2, this, std::placeholders::_1));
 #else
                 RCLCPP_WARN(this->get_logger(),
                             "livox_ros_driver2 has not been built. Please build livox_ros_driver2 or set lidar_type2 to a supported type.");
@@ -1698,22 +1540,39 @@ public:
             {
                 RCLCPP_INFO(this->get_logger(), "LiDAR 2: Using PointCloud2 format (Velodyne, Ouster, etc.)");
                 sub_pcl_pc2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                    lid_topic[LIDAR2], 20, standard_pcl_cbk2);
+                    lid_topic[LIDAR2], lidar_qos, std::bind(&LaserMappingNode::standard_pcl_cbk2, this, std::placeholders::_1));
             }
         }
-        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk);
-        pubLaserCloudFull_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 20);
-        pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", 20);
-        pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 20);
-        pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 20);
-        // Publishers for dual LiDAR visualization
-        pubLidar1_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar1_colored", 20);
-        pubLidar2_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar2_colored", 20);
-        pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 20);
-        pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", 20);
-        tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic, imu_qos, std::bind(&LaserMappingNode::imu_cbk, this, std::placeholders::_1));
+    }
 
-        //------------------------------------------------------------------------------------------------------
+    void create_publishers()
+    {
+        // QoS profiles for publishers (issue #41)
+        // Point cloud publishers: BestEffort for visualization (can drop under load)
+        auto pcl_qos = rclcpp::QoS(rclcpp::KeepLast(20))
+            .reliability(rclcpp::ReliabilityPolicy::BestEffort)
+            .durability(rclcpp::DurabilityPolicy::Volatile);
+
+        // Odometry/Path: Reliable for navigation consumers that may need every message
+        auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(20))
+            .reliability(rclcpp::ReliabilityPolicy::Reliable)
+            .durability(rclcpp::DurabilityPolicy::Volatile);
+
+        pubLaserCloudFull_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", pcl_qos);
+        pubLaserCloudFull_body_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered_body", pcl_qos);
+        pubLaserCloudEffect_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", pcl_qos);
+        pubLaserCloudMap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", pcl_qos);
+        // Publishers for dual LiDAR visualization
+        pubLidar1_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar1_colored", pcl_qos);
+        pubLidar2_colored_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar2_colored", pcl_qos);
+        pubOdomAftMapped_ = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", odom_qos);
+        pubPath_ = this->create_publisher<nav_msgs::msg::Path>("/path", odom_qos);
+        tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    }
+
+    void create_timers_and_services()
+    {
         auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / 1000.0));  // 1ms
         timer_ = rclcpp::create_timer(this, this->get_clock(), period_ms, std::bind(&LaserMappingNode::timer_callback, this));
 
@@ -1723,16 +1582,6 @@ public:
         map_save_srv_ = this->create_service<std_srvs::srv::Trigger>("map_save", std::bind(&LaserMappingNode::map_save_callback, this, std::placeholders::_1, std::placeholders::_2));
 
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
-    }
-
-    ~LaserMappingNode()
-    {
-        fout_out.close();
-        fout_pre.close();
-        if (fp != nullptr) {
-            fclose(fp);
-            fp = nullptr;
-        }
     }
 
 private:
@@ -1939,6 +1788,351 @@ private:
             res->success = false;
             res->message = "Map save disabled.";
         }
+    }
+
+    // Member callback for standard PointCloud2 messages - LiDAR 1
+    void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
+    {
+        const int lidar_id = 0;
+        double cur_time = get_time_sec(msg->header.stamp);
+        double preprocess_start_time = omp_get_wtime();
+
+        // Preprocess point cloud outside lock (CPU-intensive work)
+        PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+        p_pre->process(msg, ptr, lidar_id);
+
+        // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
+        PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+        const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
+        pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
+        ptr_transformed->header.seq = lidar_id;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_lidar_);
+            scan_count[lidar_id]++;
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "[LiDAR 1] Received scan #%d, timestamp: %.6f, points: %d",
+                        scan_count[lidar_id], cur_time, msg->width * msg->height);
+
+            if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+            {
+                RCLCPP_WARN(this->get_logger(), "[LiDAR 1] Loop back detected, clearing buffer");
+                lidar_buffer.clear();
+            }
+            if (is_first_lidar[lidar_id])
+            {
+                RCLCPP_INFO(this->get_logger(), "[LiDAR 1] First scan received!");
+                is_first_lidar[lidar_id] = false;
+            }
+
+            if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[LiDAR 1] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+                lidar_buffer.pop_front();
+                time_buffer.pop_front();
+            }
+
+            lidar_buffer.push_back(ptr_transformed);
+            time_buffer.push_back(cur_time);
+            last_timestamp_lidar[lidar_id] = cur_time;
+            if (scan_count[lidar_id] < MAXN) {
+                s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+            } else if (!s_plot_overflow_warned[lidar_id]) {
+                RCLCPP_WARN(this->get_logger(),
+                            "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                            lidar_id + 1, scan_count[lidar_id], MAXN);
+                s_plot_overflow_warned[lidar_id] = true;
+            }
+        }
+        cv_data_ready_.notify_one();
+    }
+
+    // Member callback for standard PointCloud2 messages - LiDAR 2
+    void standard_pcl_cbk2(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
+    {
+        const int lidar_id = 1;
+        double cur_time = get_time_sec(msg->header.stamp);
+        double preprocess_start_time = omp_get_wtime();
+
+        // Preprocess point cloud outside lock (CPU-intensive work)
+        PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+        p_pre->process(msg, ptr, lidar_id);
+
+        // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
+        PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+        const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
+        pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
+        ptr_transformed->header.seq = lidar_id;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_lidar_);
+            scan_count[lidar_id]++;
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "[LiDAR 2] Received scan #%d, timestamp: %.6f, points: %d",
+                        scan_count[lidar_id], cur_time, msg->width * msg->height);
+
+            if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+            {
+                RCLCPP_WARN(this->get_logger(), "[LiDAR 2] Loop back detected, clearing buffer");
+                lidar_buffer.clear();
+            }
+            if (is_first_lidar[lidar_id])
+            {
+                RCLCPP_INFO(this->get_logger(), "[LiDAR 2] First scan received!");
+                is_first_lidar[lidar_id] = false;
+            }
+
+            if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[LiDAR 2] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+                lidar_buffer.pop_front();
+                time_buffer.pop_front();
+            }
+
+            lidar_buffer.push_back(ptr_transformed);
+            time_buffer.push_back(cur_time);
+            last_timestamp_lidar[lidar_id] = cur_time;
+            if (scan_count[lidar_id] < MAXN) {
+                s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+            } else if (!s_plot_overflow_warned[lidar_id]) {
+                RCLCPP_WARN(this->get_logger(),
+                            "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                            lidar_id + 1, scan_count[lidar_id], MAXN);
+                s_plot_overflow_warned[lidar_id] = true;
+            }
+        }
+        cv_data_ready_.notify_one();
+    }
+
+#ifdef USE_LIVOX_DRIVER2
+    // Member callback for Livox CustomMsg - LiDAR 1
+    void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
+    {
+        const int lidar_id = 0;
+        double cur_time = get_time_sec(msg->header.stamp);
+        double preprocess_start_time = omp_get_wtime();
+
+        // Preprocess point cloud outside lock (CPU-intensive work)
+        PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+        p_pre->process(msg, ptr, lidar_id);
+
+        // Apply extrinsics: Transform from LiDAR 1 frame to IMU frame
+        PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+        const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_1, Lidar_T_wrt_IMU_1);
+        pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
+        ptr_transformed->header.seq = lidar_id;
+
+        {
+            std::scoped_lock lock(mtx_lidar_, mtx_imu_);
+            scan_count[lidar_id]++;
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "[LiDAR 1 Livox] Received scan #%d, timestamp: %.6f",
+                        scan_count[lidar_id], cur_time);
+
+            if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+            {
+                RCLCPP_WARN(this->get_logger(), "[LiDAR 1] Loop back detected, clearing buffer");
+                lidar_buffer.clear();
+            }
+            if(is_first_lidar[lidar_id])
+            {
+                RCLCPP_INFO(this->get_logger(), "[LiDAR 1 Livox] First scan received!");
+                is_first_lidar[lidar_id] = false;
+            }
+            last_timestamp_lidar[lidar_id] = cur_time;
+
+            if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+            {
+                printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+            }
+
+            if (time_sync_en && !timediff_set_flg && abs(last_timestamp_lidar[lidar_id] - last_timestamp_imu) > 1 && !imu_buffer.empty())
+            {
+                timediff_set_flg = true;
+                timediff_lidar_wrt_imu = last_timestamp_lidar[lidar_id] + 0.1 - last_timestamp_imu;
+                printf("Self sync IMU and LiDAR, time diff is %.10lf \n", timediff_lidar_wrt_imu);
+            }
+
+            if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[LiDAR 1 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+                lidar_buffer.pop_front();
+                time_buffer.pop_front();
+            }
+
+            lidar_buffer.push_back(ptr_transformed);
+            time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
+            if (scan_count[lidar_id] < MAXN) {
+                s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+            } else if (!s_plot_overflow_warned[lidar_id]) {
+                RCLCPP_WARN(this->get_logger(),
+                            "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                            lidar_id + 1, scan_count[lidar_id], MAXN);
+                s_plot_overflow_warned[lidar_id] = true;
+            }
+        }
+        cv_data_ready_.notify_one();
+    }
+
+    // Member callback for Livox CustomMsg - LiDAR 2
+    void livox_pcl_cbk2(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
+    {
+        const int lidar_id = 1;
+        double cur_time = get_time_sec(msg->header.stamp);
+        double preprocess_start_time = omp_get_wtime();
+
+        // Preprocess point cloud outside lock (CPU-intensive work)
+        PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+        p_pre->process(msg, ptr, lidar_id);
+
+        // Apply extrinsics: Transform from LiDAR 2 frame to IMU frame
+        PointCloudXYZI::Ptr ptr_transformed(new PointCloudXYZI());
+        const Eigen::Matrix4f lidar_to_imu = build_lidar_to_imu_transform(Lidar_R_wrt_IMU_2, Lidar_T_wrt_IMU_2);
+        pcl::transformPointCloud(*ptr, *ptr_transformed, lidar_to_imu);
+        ptr_transformed->header.seq = lidar_id;
+
+        {
+            std::scoped_lock lock(mtx_lidar_, mtx_imu_);
+            scan_count[lidar_id]++;
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "[LiDAR 2 Livox] Received scan #%d, timestamp: %.6f",
+                        scan_count[lidar_id], cur_time);
+
+            if (!is_first_lidar[lidar_id] && cur_time < last_timestamp_lidar[lidar_id])
+            {
+                RCLCPP_WARN(this->get_logger(), "[LiDAR 2] Loop back detected, clearing buffer");
+                lidar_buffer.clear();
+            }
+            if(is_first_lidar[lidar_id])
+            {
+                RCLCPP_INFO(this->get_logger(), "[LiDAR 2 Livox] First scan received!");
+                is_first_lidar[lidar_id] = false;
+            }
+            last_timestamp_lidar[lidar_id] = cur_time;
+
+            if (!time_sync_en && abs(last_timestamp_imu - last_timestamp_lidar[lidar_id]) > 10.0 && !imu_buffer.empty() && !lidar_buffer.empty() )
+            {
+                printf("IMU and LiDAR 2 not Synced, IMU time: %lf, lidar header time: %lf \n",last_timestamp_imu, last_timestamp_lidar[lidar_id]);
+            }
+
+            if (lidar_buffer.size() >= MAX_LIDAR_BUFFER_SIZE) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[LiDAR 2 Livox] Buffer full (%zu), dropping oldest scan", lidar_buffer.size());
+                lidar_buffer.pop_front();
+                time_buffer.pop_front();
+            }
+
+            lidar_buffer.push_back(ptr_transformed);
+            time_buffer.push_back(last_timestamp_lidar[lidar_id]);
+
+            if (scan_count[lidar_id] < MAXN) {
+                s_plot11[scan_count[lidar_id]] = omp_get_wtime() - preprocess_start_time;
+            } else if (!s_plot_overflow_warned[lidar_id]) {
+                RCLCPP_WARN(this->get_logger(),
+                            "[LiDAR %d] preprocess time log overflow (scan_count=%d, MAXN=%d). Skipping further log writes.",
+                            lidar_id + 1, scan_count[lidar_id], MAXN);
+                s_plot_overflow_warned[lidar_id] = true;
+            }
+        }
+        cv_data_ready_.notify_one();
+    }
+#endif
+
+    // Member callback for IMU messages
+    void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
+    {
+        publish_count++;
+        sensor_msgs::msg::Imu::SharedPtr msg(new sensor_msgs::msg::Imu(*msg_in));
+
+        // Apply IMU transformation if enabled
+        if (imu_transform_enabled)
+        {
+            Eigen::Vector3d acc(msg_in->linear_acceleration.x * imu_acc_scale,
+                               msg_in->linear_acceleration.y * imu_acc_scale,
+                               msg_in->linear_acceleration.z * imu_acc_scale);
+            Eigen::Vector3d acc_t = imu_R_transform * acc;
+            msg->linear_acceleration.x = acc_t.x();
+            msg->linear_acceleration.y = acc_t.y();
+            msg->linear_acceleration.z = acc_t.z();
+
+            Eigen::Vector3d gyro(msg_in->angular_velocity.x,
+                                msg_in->angular_velocity.y,
+                                msg_in->angular_velocity.z);
+            Eigen::Vector3d gyro_t = imu_R_transform * gyro;
+            msg->angular_velocity.x = gyro_t.x();
+            msg->angular_velocity.y = gyro_t.y();
+            msg->angular_velocity.z = gyro_t.z();
+
+            if (imu_transform_debug && (++imu_debug_counter % 200 == 0))
+            {
+                double acc_raw_mag = std::sqrt(msg_in->linear_acceleration.x * msg_in->linear_acceleration.x +
+                                               msg_in->linear_acceleration.y * msg_in->linear_acceleration.y +
+                                               msg_in->linear_acceleration.z * msg_in->linear_acceleration.z);
+                double acc_t_mag = acc_t.norm();
+
+                std::cout << "\n[IMU Transform Debug] ----------------------------------------" << std::endl;
+                std::cout << "  RAW  Acc: [" << std::fixed << std::setprecision(4)
+                          << msg_in->linear_acceleration.x << ", "
+                          << msg_in->linear_acceleration.y << ", "
+                          << msg_in->linear_acceleration.z << "] mag=" << acc_raw_mag << " (g units)" << std::endl;
+                std::cout << "  XFRM Acc: [" << acc_t.x() << ", " << acc_t.y() << ", " << acc_t.z()
+                          << "] mag=" << acc_t_mag << " (after scale=" << imu_acc_scale << ")" << std::endl;
+                std::cout << "  RAW  Gyr: [" << msg_in->angular_velocity.x << ", "
+                          << msg_in->angular_velocity.y << ", "
+                          << msg_in->angular_velocity.z << "] rad/s" << std::endl;
+                std::cout << "  XFRM Gyr: [" << gyro_t.x() << ", " << gyro_t.y() << ", " << gyro_t.z()
+                          << "] rad/s" << std::endl;
+
+                std::string grav_axis_raw = "?", grav_axis_xfrm = "?";
+                if (std::abs(msg_in->linear_acceleration.x) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.x > 0) ? "+X" : "-X";
+                else if (std::abs(msg_in->linear_acceleration.y) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.y > 0) ? "+Y" : "-Y";
+                else if (std::abs(msg_in->linear_acceleration.z) > 0.8) grav_axis_raw = (msg_in->linear_acceleration.z > 0) ? "+Z" : "-Z";
+
+                if (std::abs(acc_t.x()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.x() > 0) ? "+X" : "-X";
+                else if (std::abs(acc_t.y()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.y() > 0) ? "+Y" : "-Y";
+                else if (std::abs(acc_t.z()) > 0.8 * acc_t_mag) grav_axis_xfrm = (acc_t.z() > 0) ? "+Z" : "-Z";
+
+                std::cout << "  Gravity: RAW=" << grav_axis_raw << " → TRANSFORMED=" << grav_axis_xfrm
+                          << " (expect +Y → +Z)" << std::endl;
+                std::cout << "-----------------------------------------------------------\n" << std::endl;
+            }
+        }
+
+        msg->header.stamp = get_ros_time(get_time_sec(msg_in->header.stamp) - time_diff_lidar_to_imu);
+        if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
+        {
+            msg->header.stamp = rclcpp::Time(timediff_lidar_wrt_imu + get_time_sec(msg_in->header.stamp));
+        }
+
+        double timestamp = get_time_sec(msg->header.stamp);
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_imu_);
+
+            if (timestamp < last_timestamp_imu)
+            {
+                std::cerr << "imu loop back, clear buffer" << std::endl;
+                imu_buffer.clear();
+            }
+
+            if (imu_buffer.size() >= MAX_IMU_BUFFER_SIZE) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[IMU] Buffer full (%zu), dropping oldest samples", imu_buffer.size());
+                size_t to_drop = imu_buffer.size() / 10;
+                for (size_t i = 0; i < to_drop && !imu_buffer.empty(); i++) {
+                    imu_buffer.pop_front();
+                }
+            }
+
+            last_timestamp_imu = timestamp;
+            imu_buffer.push_back(msg);
+        }
+        cv_data_ready_.notify_one();
     }
 
 private:
