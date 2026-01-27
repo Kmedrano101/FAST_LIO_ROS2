@@ -1,0 +1,124 @@
+###############################################################################
+# FAST-LIO Navigation Configuration
+# Optimized for: Real-time autonomous navigation with reliable odometry
+# Hardware: NVIDIA Jetson ORIN + 2x MID-360
+# Priority: Odometry stability and low latency over map density
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # CORE PARAMETERS - Optimized for real-time performance
+    # ==========================================================================
+    feature_extract_enable: false
+    point_filter_num: 3                  # Aggressive downsampling for speed
+    max_iteration: 3                     # Fewer iterations, faster convergence
+    filter_size_surf: 0.3                # Larger voxels = faster processing
+    filter_size_map: 0.3                 # Coarser map = faster kd-tree queries
+    cube_side_length: 150.0              # Moderate local map size
+    runtime_pos_log_enable: false
+
+    # ==========================================================================
+    # MULTI-LIDAR CONFIGURATION
+    # ==========================================================================
+    multi_lidar: true
+    update_method: 1                     # ASYNC - stable with unsync'd LiDARs
+
+    # Adaptive thresholds (unused in ASYNC mode)
+    voxelized_pt_num_thres: 100
+    effect_pt_num_ratio_thres: 0.5
+
+    # ==========================================================================
+    # TOPICS
+    # ==========================================================================
+    common:
+      lid_topic:  "/livox/lidar_192_168_1_10"
+      lid_topic2: "/livox/lidar_192_168_1_18"
+      imu_topic:  "/livox/imu_192_168_1_10"
+      map_frame: "camera_init"
+      body_frame: "body"
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    # ==========================================================================
+    # PREPROCESSING
+    # ==========================================================================
+    preprocess:
+      lidar_type: 4                      # MID-360
+      scan_line: 4
+      blind: 1.0                         # Ignore close points (dust protection)
+      scan_rate: 10
+      timestamp_unit: 3
+
+      lidar_type2: 4
+      scan_line2: 4
+      blind2: 1.0
+      scan_rate2: 10
+      timestamp_unit2: 3
+      point_filter_num2: 3               # Match primary
+
+    # ==========================================================================
+    # MAPPING - Tuned for navigation stability
+    # ==========================================================================
+    mapping:
+      # IMU noise - moderate trust for stable fusion
+      acc_cov: 0.5
+      gyr_cov: 0.5
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+
+      fov_degree: 360.0
+      det_range: 30.0                    # MID-360 effective range
+
+      extrinsic_est_en: false
+
+      # Extrinsics (same as dual_mid360.yaml)
+      extrinsic_T_1: [0.011, -0.06588, -0.02329]
+      extrinsic_R_1: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+
+      extrinsic_T_2: [0.011, -0.06588, -0.02329]
+      extrinsic_R_2: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+
+      extrinsic_T_L2_wrt_L1: [0.0, -0.220, 0.0]
+      extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+
+      extrinsic_T_L1_wrt_drone: [0.0, 0.0, 0.0]
+      extrinsic_R_L1_wrt_drone: [1.0, 0.0, 0.0,
+                                 0.0, 1.0, 0.0,
+                                 0.0, 0.0, 1.0]
+
+    # ==========================================================================
+    # PUBLISHING - Minimal for performance
+    # ==========================================================================
+    publish:
+      path_en: true                      # Needed for visualization
+      effect_map_en: false               # Disable for performance
+      map_en: false                      # Don't publish global map
+      scan_publish_en: true              # Current scan for obstacle detection
+      dense_publish_en: false            # Sparse is enough for navigation
+      scan_bodyframe_pub_en: true
+
+    # ==========================================================================
+    # PCD SAVE - Disabled for navigation
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: false
+      pcd_file_name: "nav_map.pcd"
+      interval: -1
+
+    # ==========================================================================
+    # IMU TRANSFORM
+    # ==========================================================================
+    imu_transform:
+      enable: true
+      roll_deg: 90.0
+      pitch_deg: 0.0
+      yaw_deg: 180.0
+      acc_scale: 1.0
+      debug_log: false

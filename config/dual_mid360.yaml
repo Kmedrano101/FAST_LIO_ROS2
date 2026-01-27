@@ -20,11 +20,11 @@
     # FAST-LIO CORE PARAMETERS
     # ==========================================================================
     feature_extract_enable: false        # Use all points (no feature extraction)
-    point_filter_num: 2                  # Downsampling: keep every Nth point, 2 = 50% reduction
+    point_filter_num: 1                  # Downsampling: keep every Nth point, 2 = 50% reduction
     max_iteration: 4                     # Max iterations for ICP optimization, 3-4 is good balance
     filter_size_surf: 0.2                # Voxel size (m) for surface downsampling
     filter_size_map: 0.2                 # Voxel size (m) for map downsampling
-    cube_side_length: 100.0              # Local map cube size (meters)
+    cube_side_length: 500.0              # Local map cube size (meters)
     runtime_pos_log_enable: false        # Log position during runtime (debugging)
 
     map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/mine_fusion.pcd"
@@ -35,7 +35,7 @@
     multi_lidar: true                        # CRITICAL: Enable dual LiDAR processing
 
     # Update method: 0=BUNDLE (always merge), 1=ASYNC (always separate), 2=ADAPTIVE (auto-switch)
-    update_method: 0                         # Default: ASYNC mode for maximum update rate
+    update_method: 0                         # ASYNC mode for comparison test
 
     # Adaptive mode thresholds (only used when update_method=2)
     voxelized_pt_num_thres: 100              # Min downsampled points to use ASYNC
@@ -86,10 +86,10 @@
       # --- IMU Noise Model ---
       # Underground mines have high vibration from rough terrain
       # Increase covariance values to handle vibration noise
-      acc_cov: 0.8                       # Accelerometer noise covariance
-      gyr_cov: 0.8                       # Gyroscope noise covariance
-      b_acc_cov: 0.001                  # Accelerometer bias covariance
-      b_gyr_cov: 0.001                  # Gyroscope bias covariance
+      acc_cov: 0.8                      # Accelerometer noise covariance
+      gyr_cov: 0.8                      # Gyroscope noise covariance
+      b_acc_cov: 0.001                 # Accelerometer bias covariance
+      b_gyr_cov: 0.001               # Gyroscope bias covariance
 
       # --- Field of View & Detection Range ---
       fov_degree: 360.0                  # Total FOV with SDK-fused dual sensors
@@ -152,7 +152,7 @@
       effect_map_en: false               # Disable to reduce computational load
       map_en: true                       # Publish global map (/cloud_registered)
       scan_publish_en: true              # Publish current scan
-      dense_publish_en: false            # Disable dense cloud to save bandwidth
+      dense_publish_en: true            # Disable dense cloud to save bandwidth
       scan_bodyframe_pub_en: true        # Publish scan in body frame
 
     # ==========================================================================
@@ -160,7 +160,7 @@
     # ==========================================================================
     pcd_save:
       pcd_save_en: true                     # Save final map to PCD file
-      pcd_file_name: "mine_map_fusion.pcd"  # Output filename
+      pcd_file_name: "map_fusion.pcd"  # Output filename
       interval: -1                          # -1: Save all frames at end (single file)
                                             # >0: Save every N frames (multiple files)
 

@@ -1,0 +1,128 @@
+###############################################################################
+# FAST-LIO 3D Reconstruction Configuration
+# Optimized for: Offline processing to generate dense, complete 3D maps
+# Hardware: NVIDIA Jetson ORIN + 2x MID-360 (or desktop for faster processing)
+# Priority: Map quality and completeness over real-time performance
+#
+# USAGE: Play rosbag at reduced speed for best results
+#   ros2 bag play <bag> --clock --rate 0.5
+###############################################################################
+
+/**:
+  ros__parameters:
+    # ==========================================================================
+    # CORE PARAMETERS - Maximum quality
+    # ==========================================================================
+    feature_extract_enable: false
+    point_filter_num: 1                  # Keep ALL points (no downsampling)
+    max_iteration: 5                     # More iterations for accuracy
+    filter_size_surf: 0.05               # Very fine voxels (5cm)
+    filter_size_map: 0.05                # Dense map resolution
+    cube_side_length: 500.0              # Large local map to retain more points
+    runtime_pos_log_enable: false
+
+    map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction.pcd"
+
+    # ==========================================================================
+    # MULTI-LIDAR CONFIGURATION
+    # ==========================================================================
+    multi_lidar: true
+    update_method: 1                     # ASYNC - still recommended
+
+    voxelized_pt_num_thres: 100
+    effect_pt_num_ratio_thres: 0.5
+
+    # ==========================================================================
+    # TOPICS
+    # ==========================================================================
+    common:
+      lid_topic:  "/livox/lidar_192_168_1_10"
+      lid_topic2: "/livox/lidar_192_168_1_18"
+      imu_topic:  "/livox/imu_192_168_1_10"
+      map_frame: "camera_init"
+      body_frame: "body"
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    # ==========================================================================
+    # PREPROCESSING - Keep maximum detail
+    # ==========================================================================
+    preprocess:
+      lidar_type: 4
+      scan_line: 4
+      blind: 0.5                         # Smaller blind zone for more coverage
+      scan_rate: 10
+      timestamp_unit: 3
+
+      lidar_type2: 4
+      scan_line2: 4
+      blind2: 0.5
+      scan_rate2: 10
+      timestamp_unit2: 3
+      point_filter_num2: 1               # Keep all points from LiDAR 2
+
+    # ==========================================================================
+    # MAPPING - Tuned for accuracy
+    # ==========================================================================
+    mapping:
+      # IMU noise - tighter for better accuracy
+      acc_cov: 0.3
+      gyr_cov: 0.3
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+
+      fov_degree: 360.0
+      det_range: 50.0                    # Extended range for reconstruction
+
+      extrinsic_est_en: false
+
+      # Extrinsics (same as dual_mid360.yaml)
+      extrinsic_T_1: [0.011, -0.06588, -0.02329]
+      extrinsic_R_1: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+
+      extrinsic_T_2: [0.011, -0.06588, -0.02329]
+      extrinsic_R_2: [1.0, 0.0, 0.0,
+                      0.0, 1.0, 0.0,
+                      0.0, 0.0, 1.0]
+
+      extrinsic_T_L2_wrt_L1: [0.0, -0.220, 0.0]
+      extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+
+      extrinsic_T_L1_wrt_drone: [0.0, 0.0, 0.0]
+      extrinsic_R_L1_wrt_drone: [1.0, 0.0, 0.0,
+                                 0.0, 1.0, 0.0,
+                                 0.0, 0.0, 1.0]
+
+    # ==========================================================================
+    # PUBLISHING - Full output for reconstruction
+    # ==========================================================================
+    publish:
+      path_en: true
+      effect_map_en: true                # Show effective points
+      map_en: true                       # Publish global map
+      scan_publish_en: true
+      dense_publish_en: true             # Dense point clouds
+      scan_bodyframe_pub_en: true
+
+    # ==========================================================================
+    # PCD SAVE - Enable for final output
+    # ==========================================================================
+    pcd_save:
+      pcd_save_en: true
+      pcd_file_name: "reconstruction_map.pcd"
+      interval: -1                       # Save complete map at end (Ctrl+C)
+
+    # ==========================================================================
+    # IMU TRANSFORM
+    # ==========================================================================
+    imu_transform:
+      enable: true
+      roll_deg: 90.0
+      pitch_deg: 0.0
+      yaw_deg: 180.0
+      acc_scale: 1.0
+      debug_log: false
