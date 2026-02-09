@@ -35,11 +35,13 @@ MTK_BUILD_MANIFOLD(process_noise_ikfom,
 MTK::get_cov<process_noise_ikfom>::type process_noise_cov()
 {
 	MTK::get_cov<process_noise_ikfom>::type cov = MTK::get_cov<process_noise_ikfom>::type::Zero();
-	// Updated to match Gazebo IMU noise parameters
-	MTK::setDiagonal<process_noise_ikfom, vect3, 0>(cov, &process_noise_ikfom::ng, 0.00008);  // Gyro noise: 0.009^2 ≈ 0.00008
-	MTK::setDiagonal<process_noise_ikfom, vect3, 3>(cov, &process_noise_ikfom::na, 0.0003);   // Accel noise: 0.017^2 ≈ 0.0003
-	MTK::setDiagonal<process_noise_ikfom, vect3, 6>(cov, &process_noise_ikfom::nbg, 0.000004); // Gyro bias random walk
-	MTK::setDiagonal<process_noise_ikfom, vect3, 9>(cov, &process_noise_ikfom::nba, 0.000004); // Accel bias random walk
+	// Default process noise — matches ImuProcess constructor defaults.
+	// These are overwritten each propagation step by YAML-configured values
+	// (acc_cov, gyr_cov, b_acc_cov, b_gyr_cov), so they only affect init.
+	MTK::setDiagonal<process_noise_ikfom, vect3, 0>(cov, &process_noise_ikfom::ng, 0.1);
+	MTK::setDiagonal<process_noise_ikfom, vect3, 3>(cov, &process_noise_ikfom::na, 0.1);
+	MTK::setDiagonal<process_noise_ikfom, vect3, 6>(cov, &process_noise_ikfom::nbg, 0.0001);
+	MTK::setDiagonal<process_noise_ikfom, vect3, 9>(cov, &process_noise_ikfom::nba, 0.0001);
 	return cov;
 }
 

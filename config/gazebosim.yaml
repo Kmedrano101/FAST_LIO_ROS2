@@ -1,57 +1,61 @@
 /**:
     ros__parameters:
+        # FAST-LIO Configuration for Gazebo Simulation
+        # Optimized for clean simulation data with minimal IMU noise
+
         feature_extract_enable: false
-        point_filter_num: 3           # Downsample to reduce computational load
-        max_iteration: 10             # Balanced iterations for convergence
-        filter_size_surf: 0.1         # Larger voxel size prevents PCL integer overflow
-        filter_size_map: 0.1          # Larger voxel size for stable mapping
-        cube_side_length: 1000.0
+        point_filter_num: 4           # Heavier downsampling for dense sim data
+        max_iteration: 4              # Fewer iterations (clean data converges fast)
+        filter_size_surf: 0.15        # Voxel size for surface features
+        filter_size_map: 0.2          # Voxel size for map (slightly larger to prevent overflow)
+        cube_side_length: 500.0       # Local map cube size
         runtime_pos_log_enable: false
-        map_file_path: "/home/kmedrano/ros2_ws/src/fast_lio_ros2/PCD/sim_map.pcd"
 
         common:
-            lid_topic:  "/px4_offboard_sim/sim_lidar/data"
-            imu_topic:  "/px4_offboard_sim/sim_imu/data"
-            time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
-            time_offset_lidar_to_imu: 0.0 # This param will take effect no matter what time_sync_en is. So if the time offset is not known exactly, please set as 0.0
+            lid_topic:  "/px4_offboard_sim/lidar/points"
+            imu_topic:  "/px4_offboard_sim/imu/data"
+            time_sync_en: false         # Disable time sync (sim uses same clock)
+            time_offset_lidar_to_imu: 0.0
 
         preprocess:
-          lidar_type: 5       # 1 AVIA LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 4 for MID360 LiDAR, 5 for Gazebosim LiDAR
-          scan_line:  128     # 128 vertical samples (rings) - matches SDF configuration (2048×128 point cloud)
-          blind:      0.3     # Minimum range 0.3m - filters out drone self-detection
-          scan_rate:  10      # 10 Hz - matches SDF update_rate
-          timestamp_unit: 2   # 0: seconds, 1: milliseconds, 2: microseconds, 3: nanoseconds
+            lidar_type: 5       # GAZEBOSIM handler
+            scan_line:  64      # 64 vertical channels (from SDF vertical samples)
+            blind:      1.0     # 1.0m blind zone to filter drone body
+            scan_rate:  20      # 20 Hz (from SDF update_rate)
+            timestamp_unit: 0   # 0 = seconds (simulation time)
 
         mapping:
-          # IMU noise parameters - very low for near-perfect simulation data
-          # Low covariances = high trust in sensors = stable, smooth SLAM
-          acc_cov: 0.0001     # Very low - clean simulated IMU data
-          gyr_cov: 0.00001    # Very low - clean gyroscope data
-          b_acc_cov: 0.00001  # Very low - minimal bias in simulation
-          b_gyr_cov: 0.00001  # Very low - minimal bias drift
+            # IMU noise parameters - VERY LOW for clean simulation IMU
+            acc_cov: 0.001          # Accelerometer noise covariance (trust IMU)
+            gyr_cov: 0.0001         # Gyroscope noise covariance (trust IMU)
+            b_acc_cov: 0.00001      # Accelerometer bias covariance (stable)
+            b_gyr_cov: 0.000001     # Gyroscope bias covariance (nearly frozen)
 
-          # Extrinsic calibration (LiDAR to IMU)
-          extrinsic_est_en: false  # Disable online estimation - use fixed calibration for simulation
-          extrinsic_T: [0.0, 0.0, 0.0]  # LiDAR to IMU: Both sensors co-located in lidar_link_1
-          extrinsic_R: [ 1., 0., 0.,
-                         0., 1., 0.,
-                         0., 0., 1.] # identity - both aligned with lidar_link_1
-          fov_degree: 360.0              # horizontal FOV (full 360° - matches SDF)
-          det_range:  30.0               # Maximum detection range 30m - matches SDF range.max
-        
+            # Extrinsic calibration (LiDAR to IMU)
+            # offset_T_L_I = position of LiDAR origin in IMU (base_link) frame
+            # From SDF: lidar_link is at (0, 0, +0.26) relative to base_link
+            # gz_frame_id=lidar_link, so point cloud data is in lidar_link frame
+            # World is ENU (z-up), IMU is FLU (z-up), frames are aligned
+            extrinsic_est_en: false  # Disable - use exact SDF values
+            extrinsic_T: [0.0, 0.0, 0.26]   # LiDAR is 0.26m ABOVE IMU (+z)
+            extrinsic_R: [ 1., 0., 0.,
+                           0., 1., 0.,
+                           0., 0., 1.]  # Identity rotation - frames aligned
+
+            fov_degree: 360.0   # Horizontal FOV (full 360°)
+            det_range:  30.0    # Maximum detection range (from SDF range.max)
+
         publish:
-            path_en: true                # true: publish Path
-            effect_map_en: false         # true: publish Effects
-            map_en: true                 # true: publish Map cloud
-            scan_publish_en:  true       # false: close all the point cloud output
-            dense_publish_en: false      # false: low down the points number in a global-frame point clouds scan.
-            scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
-            map_frame_id: "camera_init"  # FAST-LIO initialization frame (aligned to world via static TF)
-            body_frame_id: "drone"        # FAST-LIO body frame (renamed to avoid conflict with drone_gt)
+            path_en: true                # Publish Path
+            effect_map_en: false         # Disable effect cloud (reduce overhead)
+            map_en: true                 # Publish Map cloud
+            scan_publish_en:  true       # Output point cloud
+            dense_publish_en: false      # Disable dense cloud (memory)
+            scan_bodyframe_pub_en: true  # Output point cloud in body frame
+            map_frame_id: "camera_init"  # FAST-LIO map frame (will be aliased to map)
+            body_frame_id: "base_link"   # Body frame for TF
 
         pcd_save:
-            pcd_save_en: false           # Disabled to prevent memory issues during testing
-            pcd_file_name: "sim_dense_map.pcd"
-            interval: 100                # Save every 100 frames to prevent memory crash
-                                        # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-    
+            pcd_save_en: false
+            pcd_file_name: "sim_map.pcd"
+            interval: 200
