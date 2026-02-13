@@ -110,7 +110,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /Odometry
+        Value: /fast_lio_ros2/Odometry
       Value: true
 
     # ============================================
@@ -142,7 +142,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /path
+        Value: /fast_lio_ros2/path
       Value: true
 
     # ============================================
@@ -227,7 +227,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /cloud_registered
+        Value: /fast_lio_ros2/cloud_registered
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -265,7 +265,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /cloud_registered_body
+        Value: /fast_lio_ros2/cloud_registered_body
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
@@ -303,7 +303,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /Laser_map
+        Value: /fast_lio_ros2/Laser_map
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
