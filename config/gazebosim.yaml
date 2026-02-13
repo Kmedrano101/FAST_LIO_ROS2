@@ -19,9 +19,9 @@
 
         preprocess:
             lidar_type: 5       # GAZEBOSIM handler
-            scan_line:  64      # 64 vertical channels (from SDF vertical samples)
-            blind:      1.0     # 1.0m blind zone to filter drone body
-            scan_rate:  20      # 20 Hz (from SDF update_rate)
+            scan_line:  120     # 120 vertical channels (from x500_depth model SDF)
+            blind:      0.3     # 0.3m blind zone (matches SDF range.min)
+            scan_rate:  10      # 10 Hz (from SDF update_rate)
             timestamp_unit: 0   # 0 = seconds (simulation time)
 
         mapping:
@@ -33,17 +33,17 @@
 
             # Extrinsic calibration (LiDAR to IMU)
             # offset_T_L_I = position of LiDAR origin in IMU (base_link) frame
-            # From SDF: lidar_link is at (0, 0, +0.26) relative to base_link
+            # From SDF: lidar_link is at (0, 0, +0.052) relative to base_link
             # gz_frame_id=lidar_link, so point cloud data is in lidar_link frame
             # World is ENU (z-up), IMU is FLU (z-up), frames are aligned
             extrinsic_est_en: false  # Disable - use exact SDF values
-            extrinsic_T: [0.0, 0.0, 0.26]   # LiDAR is 0.26m ABOVE IMU (+z)
+            extrinsic_T: [0.0, 0.0, 0.052]  # LiDAR is 0.052m ABOVE IMU (+z)
             extrinsic_R: [ 1., 0., 0.,
                            0., 1., 0.,
                            0., 0., 1.]  # Identity rotation - frames aligned
 
             fov_degree: 360.0   # Horizontal FOV (full 360°)
-            det_range:  30.0    # Maximum detection range (from SDF range.max)
+            det_range:  40.0    # Maximum detection range (from SDF range.max=40.0)
 
         publish:
             path_en: true                # Publish Path

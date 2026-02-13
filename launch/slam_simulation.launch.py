@@ -59,12 +59,12 @@ def generate_launch_description():
     )
 
     # Static transform: base_link -> lidar_link
-    # LiDAR is 0.26m above base_link (from x500_lidar_360 SDF)
+    # LiDAR is 0.052m above base_link (from x500_depth model SDF)
     static_tf_base_to_lidar = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_base_to_lidar',
-        arguments=['0', '0', '0.26', '0', '0', '0', 'base_link', 'lidar_link'],
+        arguments=['0', '0', '0.052', '0', '0', '0', 'base_link', 'lidar_link'],
         parameters=[{'use_sim_time': use_sim_time}]
     )
 

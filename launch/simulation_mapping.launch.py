@@ -44,14 +44,14 @@ def generate_launch_description():
     )
 
     # Static transform: world (Gazebo ground) -> camera_init (FAST-LIO map origin)
-    # Set z to match drone's initial spawn height + sensor offset
-    # Drone spawns at ~0.2m, sensors are at +0.29m above drone base = ~0.49m total
+    # Set z to match drone's initial spawn height + LiDAR offset
+    # Drone spawns at z=0.5m (sim.yaml), LiDAR is +0.052m above base_link = ~0.552m
     # Adjust this value to match your drone's actual spawn height in Gazebo
     static_tf_world_to_camera_init = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_world_to_camera_init',
-        arguments=['0', '0', '0.5', '0', '0', '0', 'world', 'camera_init'],
+        arguments=['0', '0', '0.552', '0', '0', '0', 'world', 'camera_init'],
         parameters=[{'use_sim_time': use_sim_time}]
     )
 
