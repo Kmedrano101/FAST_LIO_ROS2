@@ -161,7 +161,7 @@ pkill -9 px4
 # Restart simulation (loads updated SDF)
 cd ~/ros2_ws
 source install/setup.bash
-ros2 launch px4_offboard_sim slam_simulation.launch.py
+ros2 launch fast_lio_ros2 sim_slam.launch.py
 ```
 
 ### Step 2: Rebuild FAST-LIO

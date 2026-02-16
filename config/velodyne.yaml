@@ -47,6 +47,6 @@
 
         pcd_save:
             pcd_save_en: false           # Disabled for real-time testing
-            pcd_file_name: "velodyne_sim_map.pcd"
+            map_file_prefix: "velodyne_sim_map"
             interval: 100                # Save every 100 frames if enabled
                                         # -1 : all frames in ONE file (may cause memory issues)

@@ -302,7 +302,7 @@ extrinsic_R: [ 1., 0., 0.,
 
 ```bash
 # Start your simulation
-ros2 launch px4_offboard_sim slam_simulation.launch.py
+ros2 launch fast_lio_ros2 sim_slam.launch.py
 
 # Verify topics exist
 ros2 topic list | grep -E "(sim_imu|sim_lidar)"

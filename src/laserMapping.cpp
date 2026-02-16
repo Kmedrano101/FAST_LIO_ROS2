@@ -39,6 +39,10 @@
 #include <fstream>
 #include <csignal>
 #include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <filesystem>
 #include <unistd.h>
 #include <Python.h>
 #include <so3_math.h>
@@ -103,7 +107,8 @@ condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path;
-string traj_file_path, pcd_file_name;
+string traj_file_path;
+string map_file_prefix = "map";
 
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_imu = -1.0;
@@ -712,10 +717,34 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     pubLaserCloudMap->publish(laserCloudmsg);
 }
 
-void save_to_pcd()
+/// Generate a datetime-stamped filename: <name>_YYYYMMDD_HHMMSS.pcd
+string generate_map_filename(const string& name)
 {
+    auto now = std::chrono::system_clock::now();
+    auto t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+
+    std::ostringstream oss;
+    oss << name << "_"
+        << std::put_time(&tm, "%Y%m%d_%H%M%S")
+        << ".pcd";
+    return oss.str();
+}
+
+/// Save the accumulated map to PCD with datetime filename.
+/// Returns the full path of the saved file.
+string save_to_pcd()
+{
+    string pcd_dir = string(ROOT_DIR) + "PCD/";
+    std::filesystem::create_directories(pcd_dir);
+
+    string filename = generate_map_filename(map_file_prefix);
+    string full_path = pcd_dir + filename;
+
     pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+    pcd_writer.writeBinary(full_path, *pcl_wait_pub);
+    return full_path;
 }
 
 template<typename T>
@@ -966,8 +995,8 @@ public:
         this->declare_parameter<bool>("runtime_pos_log_enable", false);
         this->declare_parameter<bool>("mapping.extrinsic_est_en", true);
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
-        this->declare_parameter<string>("pcd_save.pcd_file_name", "pointclouds.pcd");
         this->declare_parameter<int>("pcd_save.interval", -1);
+        this->declare_parameter<string>("pcd_save.map_file_prefix", "map");
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_T2", vector<double>());
@@ -1019,8 +1048,8 @@ public:
         this->get_parameter_or<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
         this->get_parameter_or<bool>("mapping.extrinsic_est_en", extrinsic_est_en, true);
         this->get_parameter_or<bool>("pcd_save.pcd_save_en", pcd_save_en, false);
-        this->get_parameter_or<string>("pcd_save.pcd_file_name", pcd_file_name, "pointclouds.pcd");
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, -1);
+        this->get_parameter_or<string>("pcd_save.map_file_prefix", map_file_prefix, "map");
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T2", extrinT2, vector<double>());
@@ -1327,18 +1356,17 @@ private:
 
     void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
     {
-        RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
-        if (pcd_save_en)
-        {
-            save_to_pcd();
-            res->success = true;
-            res->message = "Map saved.";
-        }
-        else
-        {
+        if (pcl_wait_pub->empty()) {
             res->success = false;
-            res->message = "Map save disabled.";
+            res->message = "No map data to save.";
+            RCLCPP_WARN(this->get_logger(), "Map save requested but no map data available.");
+            return;
         }
+        string saved_path = save_to_pcd();
+        res->success = true;
+        res->message = "Map saved to: " + saved_path;
+        RCLCPP_INFO(this->get_logger(), "Map saved to: %s (%zu points)",
+                     saved_path.c_str(), pcl_wait_pub->size());
     }
 
 private:
@@ -1390,10 +1418,12 @@ int main(int argc, char** argv)
     /* Make sure you have enough memories to save the map */
     if (pcl_wait_save->size() > 0 && pcd_save_en)
     {
-        string file_name = string(pcd_file_name);
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        string pcd_dir = string(ROOT_DIR) + "PCD/";
+        std::filesystem::create_directories(pcd_dir);
+        string filename = generate_map_filename(map_file_prefix);
+        string all_points_dir = pcd_dir + filename;
         pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to " << all_points_dir<<endl;
+        cout << "Map saved to: " << all_points_dir << " (" << pcl_wait_save->size() << " points)" << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
     }
 

@@ -142,7 +142,7 @@ publish:
 
 ```bash
 # Terminal 1: Start PX4 Gazebo simulation
-ros2 launch px4_offboard_sim slam_simulation.launch.py
+ros2 launch fast_lio_ros2 sim_slam.launch.py
 
 # Terminal 2: Launch sync node
 ros2 launch px4_offboard_sim lidar_imu_sync.launch.py
@@ -374,7 +374,7 @@ det_range: 100.0          # Longer range
 ### Launch Files
 - Sync node: `px4_offboard_sim/launch/lidar_imu_sync.launch.py`
 - FAST-LIO: `fast_lio_ros2/launch/simulation_mapping.launch.py`
-- Full sim: `px4_offboard_sim/launch/slam_simulation.launch.py`
+- Full sim: `fast_lio_ros2/launch/sim_slam.launch.py`
 
 ### Source Code
 - Sync node: `px4_offboard_sim/src/lidar_imu_sync_node.cpp`
@@ -419,7 +419,7 @@ det_range: 100.0          # Longer range
 ### Start Everything (One-liner per terminal)
 ```bash
 # T1: Simulation
-ros2 launch px4_offboard_sim slam_simulation.launch.py
+ros2 launch fast_lio_ros2 sim_slam.launch.py
 
 # T2: Sync
 ros2 launch px4_offboard_sim lidar_imu_sync.launch.py

@@ -50,5 +50,5 @@
 
         pcd_save:
             pcd_save_en: false                  # Disable during testing to prevent memory issues
-            pcd_file_name: "mobile_robot_map.pcd"
+            map_file_prefix: "mobile_robot_map"
             interval: 100                       # Save every 100 frames if enabled

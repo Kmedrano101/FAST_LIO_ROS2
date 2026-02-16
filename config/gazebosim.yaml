@@ -56,6 +56,6 @@
             body_frame_id: "base_link"   # Body frame for TF
 
         pcd_save:
-            pcd_save_en: false
-            pcd_file_name: "sim_map.pcd"
-            interval: 200
+            pcd_save_en: true
+            interval: -1
+            map_file_prefix: "sim_map"  # Prefix for datetime-stamped PCD files (e.g. sim_map_20260216_143000.pcd)
