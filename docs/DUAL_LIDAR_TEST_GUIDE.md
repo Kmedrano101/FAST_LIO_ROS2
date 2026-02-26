@@ -1,274 +1,168 @@
-# Dual LiDAR Test and Alignment Verification Guide
+# Dual LiDAR Reconstruction Verification Guide
 
 ## Overview
-This guide explains how to test the dual Livox MID-360 FAST-LIO implementation and verify extrinsic calibration alignment.
+This guide explains how to verify the dual Livox MID-360 3D reconstruction output and diagnose alignment or quality issues.
 
 ---
 
-## Quick Start
+## Quick Start — Reconstruction Test
 
-### On Jetson (Robot/Payload)
+### On Jetson
 ```bash
-cd ~/ros2_ws
-source install/setup.bash
-ros2 launch fast_lio_ros2 dual_mapping_core.launch.py
+# Terminal 1: Launch reconstruction
+ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction
+
+# Terminal 2: Play rosbag
+ros2 bag play <path_to_bag>/ --clock --rate 0.5
+
+# Wait for bag to finish, then Ctrl+C in Terminal 1
 ```
 
-### On Desktop (Visualization)
+### Verify Output
 ```bash
-cd ~/ros2_ws
-source install/setup.bash
-ros2 launch fast_lio_ros2 dual_mapping_desktop.launch.py
+# Check PCD was saved
+ls -lh ~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction_map_*.pcd
+
+# Expected: File with millions of points, hundreds of MB
 ```
 
 ---
 
-## Test Scenarios
+## Verification Checks
 
-### Test 1: ASYNC Mode (Default)
-**Purpose**: Verify both LiDARs are receiving data and publishing correctly
+### Check 1: Both LiDARs Contributing
 
-**Config**: Set in `config/dual_mid360.yaml`
-```yaml
-update_method: 1  # ASYNC mode
+During reconstruction, verify both LiDARs are processing scans:
+
+**Console output should show alternating scans:**
+```
+[LiDAR 1 Livox] Received scan #100, timestamp: ...
+[LiDAR 2 Livox] Received scan #98, timestamp: ...
 ```
 
-**Expected Behavior**:
-- You should see alternating scans from LiDAR 1 (green) and LiDAR 2 (red)
-- Each LiDAR updates independently at ~10Hz
-- Total update rate: ~20Hz combined
+Both scan counts should be roughly equal. If one is significantly lower, check:
+- Topic connectivity: `ros2 topic hz /livox/lidar_192_168_1_10` and `_18`
+- Config: `multi_lidar: true` in `reconstruction.yaml`
 
-**Console Logs to Expect**:
+### Check 2: No Buffer Overflow
+
+Look for these warnings in the console:
 ```
-[INFO] [laser_mapping]: Update method: 1 (ASYNC)
-[INFO] [laser_mapping]: [LiDAR 1] First scan received!
-[INFO] [laser_mapping]: [LiDAR 2] First scan received!
-[ASYNC] Using LiDAR 1 scan
-[ASYNC] Using LiDAR 2 scan
+[WARN] Buffer full (500), dropping oldest scan
 ```
 
-**RViz Verification**:
-1. Enable `/lidar1_colored` display (should be GREEN)
-2. Enable `/lidar2_colored` display (should be RED)
-3. Disable `/cloud_registered` temporarily
-4. Observe alternating point clouds
-5. Both sensors should cover different FOV regions
+If present:
+- Reduce playback rate: `--rate 0.3`
+- Increase `point_filter_num` / `filter_size_surf` in config
+
+### Check 3: No "No Effective Points" Warnings
+
+After the initial 1-2 scans, there should be zero "No Effective Points" warnings.
+These indicate the EKF cannot find enough map correspondences and will produce gaps.
+
+### Check 4: Odometry Publishing
+
+```bash
+ros2 topic hz /Odometry
+# Expected: ~10-20 Hz (varies with processing speed during reconstruction)
+```
 
 ---
 
-### Test 2: BUNDLE Mode
-**Purpose**: Verify synchronized fusion of both LiDAR scans
+## Visual Verification (Desktop)
 
-**Config**: Set in `config/dual_mid360.yaml`
-```yaml
-update_method: 0  # BUNDLE mode
+### Using CloudCompare
+
+Open the PCD file on a desktop machine:
+
+1. **Density check**: The map should have uniform density throughout.
+   Areas scanned while the robot was stationary may show slightly lower density
+   due to ikd-tree downsampling (see [POINT_CLOUD_DELETION_ANALYSIS.md](POINT_CLOUD_DELETION_ANALYSIS.md)).
+
+2. **Alignment check**: Walls and surfaces should appear as single planes, not doubled.
+   Double walls indicate extrinsic calibration issues between LiDAR 1 and LiDAR 2.
+
+3. **Drift check**: If the robot returned to the start position, check if the map
+   closes properly. Note: FAST-LIO has no loop closure, so some drift is expected
+   on long trajectories.
+
+### Using RViz2 (Live Monitoring)
+
+On a desktop connected to the same ROS2 domain:
+```bash
+rviz2
 ```
 
-**Expected Behavior**:
-- System waits for synchronized scans from both LiDARs
-- Merges them into single dense scan
-- Update rate: ~10Hz (half of ASYNC)
-- Higher point density per scan
+Add displays:
+- `/cloud_registered` — Current scan in world frame
+- `/Odometry` — Trajectory
+- `/path` — Full path history
 
-**Console Logs to Expect**:
-```
-[INFO] [laser_mapping]: Update method: 0 (BUNDLE)
-[BUNDLE] Merged scans: L1=8234 pts, L2=7891 pts, Total=16125 pts
-```
-
-**Warning Logs (Normal)**:
-```
-[WARN] [BUNDLE] Time desync: 12.3 ms, discarding older scan
-```
-*This is normal - indicates temporal synchronization working*
-
-**RViz Verification**:
-1. `/lidar1_colored` and `/lidar2_colored` will be empty (merged mode)
-2. Enable `/cloud_registered` - should show denser combined scan
-3. Verify 360° coverage with both sensors
-
----
-
-### Test 3: ADAPTIVE Mode
-**Purpose**: Test intelligent switching between ASYNC and BUNDLE based on point quality
-
-**Config**: Set in `config/dual_mid360.yaml`
-```yaml
-update_method: 2  # ADAPTIVE mode
-voxelized_pt_num_thres: 100
-effect_pt_num_ratio_thres: 0.5
-```
-
-**Expected Behavior**:
-- Starts in BUNDLE mode
-- Switches to ASYNC when sufficient feature points detected
-- Switches back to BUNDLE when features lacking (e.g., featureless corridor)
-- Includes 10-scan hysteresis to prevent oscillation
-
-**Console Logs to Expect**:
-```
-[INFO] [laser_mapping]: Update method: 2 (ADAPTIVE)
-[INFO] [laser_mapping]: Adaptive thresholds: voxelized_pts >= 100, effect_ratio >= 0.50
-[ADAPTIVE] Switching to ASYNC mode (voxelized=250, effect=150, ratio=60.00%)
-[ADAPTIVE] Switching to BUNDLE mode (voxelized=80, effect=30, ratio=37.50%, tic=10)
-```
+Note: In reconstruction mode, `map_en` and `dense_publish_en` are disabled to save CPU.
+The `/cloud_registered` topic shows downsampled current scans only.
 
 ---
 
 ## Extrinsic Calibration Verification
 
-### Visual Alignment Check
+### Static Scene Test (from rosbag)
 
-#### Step 1: Static Scene Test
-1. Launch in ASYNC mode
-2. Place robot in environment with clear geometric features:
-   - Walls
-   - Corners
-   - Doorways
-   - Pipes/beams
-3. Let robot remain stationary
-4. In RViz:
-   - Enable `/lidar1_colored` (GREEN)
-   - Enable `/lidar2_colored` (RED)
-   - Set decay time to 10 seconds
+1. Find a section of the bag where the robot is near a clear geometric feature (wall, corner)
+2. In the PCD output, inspect overlapping FOV regions
+3. Features should be crisp, not doubled or blurred
 
-#### Step 2: Overlap Analysis
-**What to look for**:
-- In overlapping FOV regions, GREEN and RED points should coincide
-- Walls should appear as single line, not doubled
-- Corners should be sharp, not blurred
-- Parallel lines should remain parallel
-
-**Good Alignment**:
+### Good Alignment
 ```
-Wall view (top-down):
-GREEN:  ═══════════
-RED:    ═══════════
-Result: Perfect overlap
+Wall cross-section:
+L1 points: ═══════════
+L2 points: ═══════════
+Result: Clean single wall
 ```
 
-**Bad Alignment (Translation Error)**:
+### Bad Alignment (Translation Error)
 ```
-Wall view (top-down):
-GREEN:  ═══════════
-RED:       ═══════════
-Result: Offset wall (adjust extrinsic_T_2)
-```
-
-**Bad Alignment (Rotation Error)**:
-```
-Wall view (top-down):
-GREEN:  ═══════════
-RED:    ═══════╱
-Result: Angled wall (adjust extrinsic_R_2)
+Wall cross-section:
+L1 points: ═══════════
+L2 points:    ═══════════
+Result: Double wall (adjust extrinsic_T_L2_wrt_L1)
 ```
 
-#### Step 3: Dynamic Test
-1. Move robot slowly through environment
-2. Watch for:
-   - Consistent alignment during motion
-   - No "swimming" or relative motion between clouds
-   - Features remain aligned across different distances
-
----
-
-### Quantitative Alignment Metrics
-
-#### Metric 1: Point Cloud Distance
-Use PCL tools to measure distance between corresponding points:
-```bash
-# Save both clouds
-ros2 topic echo /lidar1_colored --once > l1.pcd
-ros2 topic echo /lidar2_colored --once > l2.pcd
-
-# Calculate ICP alignment error (should be < 2cm for good calibration)
+### Bad Alignment (Rotation Error)
+```
+Wall cross-section:
+L1 points: ═══════════
+L2 points: ═══════╱
+Result: Angled overlap (adjust extrinsic_R_L2_wrt_L1)
 ```
 
-#### Metric 2: Feature Correspondence
-- Identify 10-20 clear corner points in both clouds
-- Measure 3D Euclidean distance
-- **Threshold**: Average error < 2cm, Max error < 5cm
-
----
-
-## Extrinsic Calibration Adjustment
-
-### Current Values
-**File**: `config/dual_mid360.yaml`
-
-**LiDAR 1 → IMU** (Front sensor, IP: 192.168.1.10):
-```yaml
-extrinsic_T_1: [-0.011, 0.02329, -0.15412]  # [x, y, z] meters
-extrinsic_R_1: [-1.00000,  0.00000,  0.00000,
-                 0.00000, -1.00000,  0.00000,
-                 0.00000,  0.00000,  1.00000]
-```
-
-**LiDAR 2 → IMU** (Rear sensor, IP: 192.168.1.18):
-```yaml
-extrinsic_T_2: [-0.011, -0.02329, -0.15412]  # [x, y, z] meters
-extrinsic_R_2: [-1.00000,  0.00000,  0.00000,
-                 0.00000, -1.00000,  0.00000,
-                 0.00000,  0.00000,  1.00000]
-```
-
-### Adjustment Procedure
-
-#### Translation Misalignment
-**Symptom**: Walls/features appear shifted
-
-**Solution**:
-1. Measure offset in RViz (use measurement tool)
-2. Adjust `extrinsic_T_2`:
-   - X offset: Forward/backward
-   - Y offset: Left/right
-   - Z offset: Up/down
-3. Restart `dual_mapping_core.launch.py`
-4. Verify improvement
-
-#### Rotation Misalignment
-**Symptom**: Walls appear angled, corners not sharp
-
-**Solution**:
-1. Use rotation matrix calculator
-2. Small rotations (< 5°) can be approximated:
-   ```
-   Rotation around Z (yaw):
-   cos(θ)  -sin(θ)  0
-   sin(θ)   cos(θ)  0
-   0        0       1
-   ```
-3. Update `extrinsic_R_2`
-4. Restart and verify
+See [EXTRINSIC_CALIBRATION_GUIDE.md](EXTRINSIC_CALIBRATION_GUIDE.md) for adjustment procedure.
 
 ---
 
 ## Performance Monitoring
 
-### Topic Hz Check
-```bash
-# Should be ~10Hz each in ASYNC mode
-ros2 topic hz /lidar1_colored
-ros2 topic hz /lidar2_colored
-
-# Should be ~10Hz
-ros2 topic hz /Odometry
-
-# Should match LiDAR rate
-ros2 topic hz /cloud_registered
-```
-
 ### CPU Usage (on Jetson)
 ```bash
 top -p $(pgrep fastlio_mapping)
 ```
-**Expected**: 200-300% CPU (using 2-3 cores efficiently)
+**Expected during reconstruction**: 50-80% CPU (single core)
 
 ### Memory Usage
 ```bash
-ros2 run fast_lio_ros2 fastlio_mapping --ros-args --param runtime_pos_log_enable:=true
+watch free -h
 ```
-**Expected**: < 2GB RAM
+**Monitor during long runs** — PCD accumulation grows memory continuously.
+A 5-minute bag at 0.5x rate typically produces 20-25M points (~700MB PCD).
+
+### Buffer Health
+
+No "Buffer full" warnings = healthy. If they appear:
+
+| Fix | Impact |
+|-----|--------|
+| Reduce `--rate` | Slows playback, gives more processing time |
+| Increase `point_filter_num` | Fewer points per scan, less accuracy |
+| Increase `filter_size_surf` | Coarser voxels, less detail |
 
 ---
 
@@ -276,117 +170,48 @@ ros2 run fast_lio_ros2 fastlio_mapping --ros-args --param runtime_pos_log_enable
 
 ### Problem: Only one LiDAR shows data
 
-**Check**:
 ```bash
-# Verify topics exist
-ros2 topic list | grep lidar
+# Verify topics exist in the bag
+ros2 bag info <bag_path> | grep lidar
 
-# Check data rate
+# Check data rate during playback
 ros2 topic hz /livox/lidar_192_168_1_10
 ros2 topic hz /livox/lidar_192_168_1_18
 ```
 
-**Solution**:
+**Solution:**
 - Verify `multi_lidar: true` in config
-- Check Livox driver configuration
-- Ensure both sensors powered and connected
+- Check that bag contains both LiDAR topics
 
-### Problem: Severe misalignment
+### Problem: Severe misalignment in PCD
 
-**Check**:
-1. Verify physical sensor mounting
-2. Confirm sensor IPs match config
+1. Verify physical sensor mounting matches config
+2. Confirm sensor IPs match config topics
 3. Check if sensors were swapped during installation
+4. Re-run with `extrinsic_est_en: true` for online estimation
 
-**Solution**:
-- Re-measure sensor positions relative to IMU
-- Use CAD model if available
-- Perform manual calibration procedure
+### Problem: Map density drops in stationary areas
 
-### Problem: Bundle mode shows desync warnings
-
-**This is normal!** The 50ms tolerance ensures:
-- Temporal alignment
-- Only synchronized scans are merged
-
-**Excessive warnings (>50% of scans)**:
-- Check sensor synchronization
-- Verify both sensors at same scan rate (10Hz)
-- Check for network latency issues
-
----
-
-## Data Collection for Calibration
-
-### Calibration Dataset Capture
-```bash
-# Record topics for offline calibration
-ros2 bag record /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 /livox/imu_transformed
-
-# Move robot to capture:
-# - Walls at multiple angles
-# - Corners and edges
-# - Objects at various distances (5-30m)
-# - 360° rotation in place
-```
-
-### Recommended Calibration Tools
-- **Livox Calibration Tool**: Official tool for multi-LiDAR calibration
-- **MCalib**: Multi-LiDAR automatic calibration
-- **Manual correspondence**: For fine-tuning
+This is expected behavior — see [POINT_CLOUD_DELETION_ANALYSIS.md](POINT_CLOUD_DELETION_ANALYSIS.md).
+The ikd-tree downsamples when re-scanning the same area.
 
 ---
 
 ## Success Criteria
 
-### ✅ System is working correctly when:
-1. Both LiDAR topics publishing at 10Hz
-2. Console shows alternating L1/L2 scans (ASYNC) or merged scans (BUNDLE)
-3. Visual alignment error < 2cm in overlapping regions
-4. No persistent drift during static tests
-5. Trajectory smooth and continuous
-6. Map quality matches single-LiDAR performance
-
-### ❌ Issues requiring attention:
-1. Only one LiDAR active
-2. Alignment error > 5cm
-3. Clouds "swimming" relative to each other
-4. Frequent temporal desync warnings (>50%)
-5. Crashes or seg faults
-6. Trajectory jumps or discontinuities
-
----
-
-## Advanced Testing
-
-### Stress Test: Fast Motion
-1. Move robot at maximum speed
-2. Verify no scan drops
-3. Check trajectory continuity
-
-### Stress Test: Feature-poor Environment
-1. Long corridor with uniform walls
-2. Adaptive mode should switch to BUNDLE
-3. Verify localization doesn't drift
-
-### Stress Test: Dense Features
-1. Cluttered environment
-2. Adaptive mode should stay in ASYNC
-3. Verify high update rate maintained
-
----
-
-## Contact and Support
-
-For issues specific to dual LiDAR implementation:
-1. Check GitHub issues: https://github.com/anthropics/fast_lio_ros2
-2. Review configuration in `config/dual_mid360.yaml`
-3. Enable debug logging: `async_debug: true`
+A successful reconstruction should show:
+1. Both LiDAR scan counts roughly equal (~5% difference is normal)
+2. Zero "Buffer full" warnings throughout the run
+3. Zero "No Effective Points" warnings after initialization
+4. PCD file contains millions of points with uniform density
+5. Smooth, continuous trajectory with no jumps
+6. Clean single-surface geometry (no double walls from misalignment)
 
 ---
 
 ## Version Info
-- FAST-LIO: ROS2 Dual LiDAR Implementation
-- Tested with: Livox MID-360 (Firmware >= 1.0)
-- ROS2: Humble/Iron
-- Platform: NVIDIA Jetson Orin (tested), x86_64 (should work)
+- FAST-LIO: ROS2 Dual LiDAR 3D Reconstruction
+- Branch: `jetson-dev-rec`
+- Hardware: Livox MID-360 (Firmware >= 1.0)
+- ROS2: Humble
+- Platform: NVIDIA Jetson Orin

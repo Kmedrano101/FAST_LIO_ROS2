@@ -4,9 +4,9 @@
 
 This document describes the modifications made to `fast_lio_ros2` to support Livox CustomMsg format for MID-360 LiDAR sensors, enabling precise per-point timestamps for improved motion compensation.
 
-**Date:** January 2025
-**Branch:** `jetson-dev-pcl`
-**Target Hardware:** Dual Livox MID-360 + NVIDIA Jetson
+**Date:** January 2025 (updated February 2026)
+**Branch:** `jetson-dev-rec` (3D Reconstruction)
+**Target Hardware:** Dual Livox MID-360 + NVIDIA Jetson ORIN
 
 ---
 

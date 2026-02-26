@@ -14,11 +14,11 @@
     # CORE PARAMETERS - Maximum quality
     # ==========================================================================
     feature_extract_enable: false
-    point_filter_num: 1                  # Keep ALL points (no downsampling)
-    max_iteration: 5                     # More iterations for accuracy
-    filter_size_surf: 0.05               # Very fine voxels (5cm)
-    filter_size_map: 0.05                # Dense map resolution
-    cube_side_length: 500.0              # Large local map to retain more points
+    point_filter_num: 3                  # Keep every 3rd point — aggressive for Jetson throughput
+    max_iteration: 3                     # Fewer iterations for faster convergence
+    filter_size_surf: 0.12               # 12cm voxels — good density, ~14x fewer than 5cm
+    filter_size_map: 0.12                # Match surf resolution
+    cube_side_length: 2000.0             # Very large to prevent any trimming during reconstruction
     runtime_pos_log_enable: false
 
     map_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction.pcd"
@@ -59,7 +59,7 @@
       blind2: 0.5
       scan_rate2: 10
       timestamp_unit2: 3
-      point_filter_num2: 1               # Keep all points from LiDAR 2
+      point_filter_num2: 3               # Keep every 3rd point from LiDAR 2
 
     # ==========================================================================
     # MAPPING - Tuned for accuracy
@@ -72,7 +72,7 @@
       b_gyr_cov: 0.0001
 
       fov_degree: 360.0
-      det_range: 50.0                    # Extended range for reconstruction
+      det_range: 30.0                    # Tighter range — less map to manage on Jetson
 
       extrinsic_est_en: false
 
@@ -102,11 +102,11 @@
     # ==========================================================================
     publish:
       path_en: true
-      effect_map_en: true                # Show effective points
-      map_en: true                       # Publish global map
+      effect_map_en: false               # Disable — saves CPU during reconstruction
+      map_en: false                      # Disable — global map pub gets expensive as map grows
       scan_publish_en: true
-      dense_publish_en: true             # Dense point clouds
-      scan_bodyframe_pub_en: true
+      dense_publish_en: false            # Downsampled scan — saves serialization cost
+      scan_bodyframe_pub_en: false       # Disable — not needed for offline reconstruction
 
     # ==========================================================================
     # PCD SAVE - Enable for final output

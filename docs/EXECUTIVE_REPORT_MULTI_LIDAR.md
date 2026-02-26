@@ -1,16 +1,16 @@
-# Executive Report: Multi-LiDAR FAST-LIO ROS2
+# Executive Report: Dual-LiDAR 3D Reconstruction System
 
-**Project:** FAST-LIO ROS2 Multi-LiDAR Fork
-**Branch:** `jetson-dev-pcl`
+**Project:** FAST-LIO ROS2 — 3D Reconstruction
+**Branch:** `jetson-dev-rec`
 **Base Repository:** [Ericsii/FAST_LIO_ROS2](https://github.com/Ericsii/FAST_LIO_ROS2)
-**Date:** January 2025
+**Date:** February 2026
 **Platform:** NVIDIA Jetson ORIN / ROS2 Humble
 
 ---
 
 ## 1. Executive Summary
 
-This document presents a comprehensive analysis of the modifications made to the original FAST-LIO ROS2 repository to enable multi-LiDAR support for drone-based underground mine navigation. The `jetson-dev-pcl` branch introduces significant architectural changes that transform a single-LiDAR SLAM system into a fully functional dual-LiDAR odometry solution.
+This document presents the architecture and modifications of the FAST-LIO ROS2 3D reconstruction system. The `jetson-dev-rec` branch builds on dual-LiDAR support to provide offline dense 3D map generation from rosbag recordings, optimized for NVIDIA Jetson ORIN hardware constraints.
 
 ### Key Achievements
 
@@ -173,10 +173,10 @@ common:
 ### 4.3 TCP DDS Considerations
 
 - **QoS Profile:** Uses reliable transport for critical sensor data
-- **Buffer Limits:** Prevents memory exhaustion during network delays
+- **Buffer Limits:** Sized for reconstruction workloads on Jetson
   ```cpp
-  constexpr size_t MAX_LIDAR_BUFFER_SIZE = 100;  // ~10 seconds at 10Hz
-  constexpr size_t MAX_IMU_BUFFER_SIZE = 2000;   // ~10 seconds at 200Hz
+  constexpr size_t MAX_LIDAR_BUFFER_SIZE = 500;  // ~50 seconds at 10Hz
+  constexpr size_t MAX_IMU_BUFFER_SIZE = 5000;   // ~25 seconds at 200Hz
   ```
 - **Condition Variables:** Enable efficient waiting for new data
   ```cpp
@@ -377,18 +377,19 @@ ros2 launch slam_tools pointcloud_calibrator.launch.py \
 
 ## 10. Recommendations
 
-### Immediate Actions
+### For 3D Reconstruction
 
-1. Run IMU calibration with the sensor stationary to obtain realistic noise parameters
-2. Verify extrinsic calibration using the pointcloud_calibrator tool
-3. Test with `update_method: 2` (adaptive) for balanced performance
+1. Always use `modo:=reconstruction` which loads `reconstruction.yaml` and auto-enables `use_sim_time`
+2. Play rosbags at `--rate 0.5` on Jetson ORIN to prevent buffer overflow
+3. Use ASYNC mode (`update_method: 1`) — BUNDLE mode fails with unsynchronized MID-360 timestamps
+4. Monitor memory during long reconstructions: `watch free -h`
 
 ### Future Improvements
 
-1. Implement loop closure for long-duration mapping
-2. Add online extrinsic estimation for dynamic calibration
-3. Optimize ikd-Tree for multi-threaded operation on ARM
-4. Add visual odometry fusion for GPS-denied environments
+1. Implement loop closure for long-duration reconstruction consistency
+2. Optimize ikd-Tree for multi-threaded operation on ARM
+3. Add incremental PCD save for crash-safe long runs
+4. GPU-accelerated point cloud processing on Jetson
 
 ---
 
@@ -401,5 +402,5 @@ ros2 launch slam_tools pointcloud_calibrator.launch.py \
 
 ---
 
-**Report Generated:** January 2025
+**Report Generated:** February 2026
 **Author:** TIDOP Research Group - Drone Navigation Team

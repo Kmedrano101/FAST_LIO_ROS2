@@ -1,5 +1,9 @@
 # SDK Fusion Setup Guide for Dual MID-360
 
+> **Note:** The `jetson-dev-rec` branch uses FAST-LIO multi-sensor fusion (ASYNC mode)
+> for 3D reconstruction, not SDK fusion. This document is retained as a reference for
+> an alternative approach that may be useful on more resource-constrained devices.
+
 This guide explains how to configure FAST-LIO to work with Livox SDK fusion mode for dual MID-360 LiDARs.
 
 ## Overview
@@ -349,7 +353,7 @@ rviz2
 ## Contact
 
 For issues specific to this configuration:
-- Branch: `jetson-dev`
+- Branch: `jetson-dev-rec`
 - Repository: fast_lio_ros2 (your fork)
 
 For general FAST-LIO or Livox driver issues, refer to the official repositories.

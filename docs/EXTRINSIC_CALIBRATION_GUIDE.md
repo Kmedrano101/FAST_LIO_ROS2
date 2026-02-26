@@ -1,8 +1,8 @@
-# Extrinsic Calibration Guide for Dual MID-360 Setup
+# Extrinsic Calibration Guide for Dual MID-360 3D Reconstruction
 
 ## Overview
 
-This document explains the **complete extrinsic calibration chain** for the dual Livox MID-360 setup with FAST-LIO ROS2, detailing how transformations flow from LiDAR native frames through the Livox driver, slam_tools IMU transformer, and finally to FAST-LIO.
+This document explains the **complete extrinsic calibration chain** for the dual Livox MID-360 3D reconstruction setup with FAST-LIO ROS2, detailing how transformations flow from LiDAR native frames through the Livox driver, slam_tools IMU transformer, and finally to FAST-LIO. Correct extrinsics are critical for reconstruction quality — misalignment causes double walls and reduced map density.
 
 **Critical Understanding**: FAST-LIO uses **LiDAR 1 IMU body frame** as its reference coordinate system, NOT base_link. All transformations must be expressed relative to the L1 IMU body.
 
@@ -266,7 +266,7 @@ extrinsic_R_L2_wrt_L1 = Identity  (both aligned in base_link)
 
 ## Final FAST-LIO Configuration
 
-**File**: `/home/jetson/ros2_ws/src/fast_lio_ros2/config/dual_mid360.yaml`
+**File**: `/home/jetson/ros2_ws/src/fast_lio_ros2/config/reconstruction.yaml`
 
 ```yaml
 mapping:
@@ -357,7 +357,7 @@ When running with these extrinsics:
 | **mid360_L1.json** | Livox driver L1 | Roll=90°, Yaw=180°, Y=+110mm |
 | **mid360_L2.json** | Livox driver L2 | Roll=90°, Yaw=0°, Y=-110mm |
 | **slam_tools** | IMU rotation | Roll=90°, Yaw=180° |
-| **dual_mid360.yaml** | FAST-LIO extrinsics | T=[0.011, -0.06588, -0.02329] |
+| **reconstruction.yaml** | FAST-LIO extrinsics | T=[0.011, -0.06588, -0.02329] |
 
 ---
 
@@ -430,7 +430,8 @@ ros2 launch fast_lio_ros2 dual_mapping_core.launch.py
 
 ---
 
-**Document Version**: 2.0
-**Last Updated**: 2025-12-02
-**Status**: Verified with working dual MID-360 setup
+**Document Version**: 3.0
+**Last Updated**: 2026-02-20
+**Branch**: `jetson-dev-rec` (3D Reconstruction)
+**Status**: Verified with working dual MID-360 reconstruction setup
 **Key Insight**: FAST-LIO uses L1 IMU body as reference frame, not base_link

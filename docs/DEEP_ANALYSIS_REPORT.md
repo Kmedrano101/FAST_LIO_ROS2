@@ -1,7 +1,7 @@
 # Deep Analysis Report: fast_lio_ros2
 
-**Analysis Date:** January 2025
-**Package Version:** Custom fork with dual-LiDAR support
+**Analysis Date:** January 2025 (updated February 2026)
+**Package Version:** Custom fork — 3D Reconstruction branch (`jetson-dev-rec`)
 **Platform:** NVIDIA Jetson ORIN / ROS2 Humble
 
 ---
@@ -579,19 +579,11 @@ pcl::transformPointCloud(*ptr, *ptr_transformed, transform_matrix);
 
 **Issue:** If processing is slower than input, buffers grow indefinitely
 
-**Fix:**
-```cpp
-const size_t MAX_BUFFER_SIZE = 100;
+**Status:** RESOLVED — Buffer limits implemented with `MAX_LIDAR_BUFFER_SIZE = 500` and `MAX_IMU_BUFFER_SIZE = 5000` for reconstruction workloads.
 
-mtx_buffer.lock();
-if (lidar_buffer.size() >= MAX_BUFFER_SIZE) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-        "Buffer full, dropping oldest scan");
-    lidar_buffer.pop_front();
-    time_buffer.pop_front();
-}
-lidar_buffer.push_back(ptr_transformed);
-mtx_buffer.unlock();
+```cpp
+constexpr size_t MAX_LIDAR_BUFFER_SIZE = 500;  // ~50 seconds at 10Hz
+constexpr size_t MAX_IMU_BUFFER_SIZE = 5000;   // ~25 seconds at 200Hz
 ```
 
 ### 7.4 Excessive Logging

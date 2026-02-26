@@ -39,6 +39,7 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
@@ -129,8 +130,8 @@ std::condition_variable cv_data_ready_;  // Signaled when new sensor data arrive
 
 // Buffer size limits to prevent unbounded growth (fixes issue #47)
 // If processing is slower than input, old data is dropped to prevent memory exhaustion
-constexpr size_t MAX_LIDAR_BUFFER_SIZE = 100;  // ~10 seconds at 10Hz
-constexpr size_t MAX_IMU_BUFFER_SIZE = 2000;   // ~10 seconds at 200Hz
+constexpr size_t MAX_LIDAR_BUFFER_SIZE = 500;  // ~50 seconds at 10Hz — headroom for processing spikes
+constexpr size_t MAX_IMU_BUFFER_SIZE = 5000;   // ~25 seconds at 200Hz — matches lidar buffer window
 
 string root_dir = ROOT_DIR;
 string map_file_path;
@@ -258,8 +259,33 @@ inline void dump_lio_state_to_log(FILE *fp)
     fprintf(fp, "%lf %lf %lf ", state_point.bg(0), state_point.bg(1), state_point.bg(2));    // Bias_g  
     fprintf(fp, "%lf %lf %lf ", state_point.ba(0), state_point.ba(1), state_point.ba(2));    // Bias_a  
     fprintf(fp, "%lf %lf %lf ", state_point.grav[0], state_point.grav[1], state_point.grav[2]); // Bias_a  
-    fprintf(fp, "\r\n");  
+    fprintf(fp, "\r\n");
     fflush(fp);
+}
+
+std::string generate_timestamp_filename(const std::string& base_name) {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::tm* tm_now = std::localtime(&time_t_now);
+
+    std::string name = base_name;
+    size_t ext_pos = name.rfind(".pcd");
+    if (ext_pos != std::string::npos) {
+        name = name.substr(0, ext_pos);
+    }
+
+    std::ostringstream oss;
+    oss << name << "_"
+        << std::setfill('0')
+        << std::setw(4) << (tm_now->tm_year + 1900)
+        << std::setw(2) << (tm_now->tm_mon + 1)
+        << std::setw(2) << tm_now->tm_mday << "_"
+        << std::setw(2) << tm_now->tm_hour
+        << std::setw(2) << tm_now->tm_min
+        << std::setw(2) << tm_now->tm_sec
+        << ".pcd";
+
+    return oss.str();
 }
 
 void pointBodyToWorld_ikfom(PointType const * const pi, PointType * const po, state_ikfom &s)
@@ -2186,10 +2212,10 @@ int main(int argc, char** argv)
     /* Make sure you have enough memories to save the map */
     if (pcl_wait_save->size() > 0 && pcd_save_en)
     {
-        string file_name = string(pcd_file_name);
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        string timestamped_name = generate_timestamp_filename(pcd_file_name);
+        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + timestamped_name);
         pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to " << all_points_dir<<endl;
+        cout << "Map saved to " << all_points_dir << " (" << pcl_wait_save->size() << " points)" << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
     }
 

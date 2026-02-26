@@ -3,13 +3,14 @@
 **Date:** 2026-01-22
 **Hardware:** NVIDIA Jetson Orin + 2x Livox MID-360
 **ROS2:** Humble
+**Branch:** `jetson-dev-rec` (3D Reconstruction)
 **Rosbag:** Dual LiDAR recording with ~100ms timestamp offset between sensors
 
 ---
 
 ## Executive Summary
 
-**ASYNC mode is strongly recommended** for dual MID-360 setups where hardware time synchronization is not available. BUNDLE mode requires tight temporal synchronization (<100ms) which is not achievable with standard MID-360 configurations.
+**ASYNC mode (`update_method: 1`) is used for all 3D reconstruction** on this branch. BUNDLE mode requires tight temporal synchronization (<100ms) which is not achievable with standard MID-360 configurations. This document records the comparison tests that led to this decision.
 
 ---
 
@@ -172,11 +173,12 @@ Options to make BUNDLE work (requires code changes):
 
 ## Conclusion
 
-For the dual MID-360 setup on Jetson Orin without hardware time synchronization:
+For the dual MID-360 3D reconstruction setup on Jetson Orin:
 
-1. **Always use ASYNC mode** (`update_method: 1`)
-2. **Keep standard parameters** (`filter_size: 0.2`, `point_filter_num: 2`) for stable operation
-3. **Dense parameters** are too demanding for Jetson hardware with dual LiDARs
+1. **Always use ASYNC mode** (`update_method: 1`) — set in `reconstruction.yaml`
+2. **Reconstruction parameters** (`filter_size: 0.12`, `point_filter_num: 3`) are tuned for Jetson throughput
+3. **Non-essential publishing disabled** (`map_en: false`, `dense_publish_en: false`) to free CPU
+4. **500-scan buffer** absorbs processing spikes during rosbag playback at `--rate 0.5`
 
 The ~100ms timestamp offset between unsynchronized MID-360 LiDARs is fundamental and cannot be resolved without hardware sync or code modifications to increase the tolerance threshold.
 

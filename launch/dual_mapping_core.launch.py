@@ -8,6 +8,7 @@
 # Usage:
 #   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py
 #   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py config_file:=my_config.yaml
+#   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction  # Full point preservation
 #   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py update_method:=0  # BUNDLE mode
 #   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py update_method:=1  # ASYNC mode
 #   ros2 launch fast_lio_ros2 dual_mapping_core.launch.py update_method:=2  # ADAPTIVE mode
@@ -20,7 +21,7 @@ import os.path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -41,12 +42,17 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     config_path = LaunchConfiguration('config_path')
     config_file = LaunchConfiguration('config_file')
+    modo = LaunchConfiguration('modo')
 
     # Argument: use_sim_time
+    # Default to 'true' in reconstruction mode (always from rosbag with --clock)
+    sim_time_default = PythonExpression([
+        "'true' if '", modo, "' == 'reconstruction' else 'false'"
+    ])
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='false',
-        description='Use simulation (Gazebo) clock if true'
+        default_value=sim_time_default,
+        description='Use simulation (Gazebo) clock if true. Auto-enabled for reconstruction mode.'
     )
 
     # Argument: config_path
@@ -62,6 +68,20 @@ def generate_launch_description():
         default_value='dual_mid360.yaml',
         description='YAML configuration file name (must exist in config_path)'
     )
+
+    # Argument: modo (operation mode)
+    declare_modo_cmd = DeclareLaunchArgument(
+        'modo',
+        default_value='default',
+        description='Operation mode: "default", "navigation", or "reconstruction" (overrides config_file)'
+    )
+
+    # Effective config: use mode-specific yaml if modo is set, otherwise use config_file
+    effective_config = PythonExpression([
+        "'reconstruction.yaml' if '", modo, "' == 'reconstruction' "
+        "else 'navigation.yaml' if '", modo, "' == 'navigation' "
+        "else '", config_file, "'"
+    ])
 
     # ==========================================================================
     # FAST-LIO CORE NODE
@@ -85,7 +105,7 @@ def generate_launch_description():
         name='fastlio_mapping',
         output='screen',
         parameters=[
-            PathJoinSubstitution([config_path, config_file]),
+            PathJoinSubstitution([config_path, effective_config]),
             {'use_sim_time': use_sim_time}
         ],
         # Increase priority for real-time performance
@@ -101,6 +121,7 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_config_path_cmd)
     ld.add_action(declare_config_file_cmd)
+    ld.add_action(declare_modo_cmd)
 
     # Add informational log message
     ld.add_action(LogInfo(
@@ -109,7 +130,8 @@ def generate_launch_description():
             '═══════════════════════════════════════════════════════════════\n',
             ' FAST-LIO Dual LiDAR Core (No Visualization)\n',
             '═══════════════════════════════════════════════════════════════\n',
-            ' Config: ', config_file, '\n',
+            ' Mode: ', modo, '\n',
+            ' Config: ', effective_config, '\n',
             ' Sim Time: ', use_sim_time, '\n',
             '───────────────────────────────────────────────────────────────\n',
             ' Subscribed Topics:\n',

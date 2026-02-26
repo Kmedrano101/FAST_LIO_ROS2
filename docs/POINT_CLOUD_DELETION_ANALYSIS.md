@@ -286,4 +286,5 @@ The point deletion issue is caused by a combination of:
 ---
 
 *Document created: January 2026*
-*Analysis performed on: fast_lio_ros2 jetson-dev branch*
+*Analysis performed on: fast_lio_ros2 `jetson-dev-rec` branch (3D Reconstruction)*
+*Note: With `cube_side_length: 2000` in reconstruction mode, FOV culling (Fix 2) is effectively addressed. The primary remaining concern is ikd-tree downsampling during stationary re-scans (Fix 1).*
