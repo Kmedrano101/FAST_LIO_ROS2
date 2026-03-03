@@ -1,0 +1,62 @@
+###############################################################################
+# Point Cloud Colorizer Configuration
+#
+# Colorizes FAST-LIO point clouds with GoPro camera images.
+# Projects 3D body-frame points onto camera image planes using pinhole model
+# and samples RGB via bilinear interpolation (FAST-LIVO2 approach).
+#
+# Reference frames:
+#   - Point cloud: L1 IMU body frame (FAST-LIO "body" frame)
+#   - Camera positions: specified in base_link, auto-converted to body frame
+#   - base_to_body_t: translation from base_link to L1 IMU body frame
+###############################################################################
+
+pointcloud_colorizer:
+  ros__parameters:
+    # Input/output topics
+    cloud_topic: "/cloud_registered_body"
+    output_topic: "/cloud_registered_rgb"
+
+    # Subscribe to CompressedImage (true) or raw Image (false)
+    use_compressed: true
+
+    # Number of cameras
+    num_cameras: 2
+
+    # base_link -> L1 IMU body translation [x, y, z] meters
+    # From FAST-LIO config: extrinsic_T_1
+    base_to_body_t: [0.011, -0.06588, -0.02329]
+
+    # ----- Camera 0: Front GoPro -----
+    camera_0:
+      image_topic: "/gopro/camera_0/image_raw/compressed"
+      # Intrinsics: GoPro Hero 13 Black, 1080p, Linear FOV (~67 deg HFOV)
+      # APPROXIMATE — refine with checkerboard calibration
+      fx: 1440.0
+      fy: 1440.0
+      cx: 960.0
+      cy: 540.0
+      # Position in base_link frame [x, y, z] meters
+      position: [0.095, 0.0, 0.0]
+      # Camera facing direction: front(+X), back(-X), left(+Y), right(-Y)
+      facing: "front"
+
+    # ----- Camera 1: Back GoPro -----
+    camera_1:
+      image_topic: "/gopro/camera_1/image_raw/compressed"
+      fx: 1440.0
+      fy: 1440.0
+      cx: 960.0
+      cy: 540.0
+      position: [-0.095, 0.0, 0.0]
+      facing: "back"
+
+    # Depth filtering (meters)
+    min_depth: 0.5
+    max_depth: 30.0
+
+    # Pixel margin from image edges (bilinear interp needs >= 1)
+    image_margin: 5
+
+    # Use LiDAR intensity as grayscale for points not visible to any camera
+    intensity_as_grayscale: true

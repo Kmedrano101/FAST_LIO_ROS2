@@ -90,6 +90,10 @@ else()
   set(USE_LIVOX FALSE)
 endif()
 
+# Colorizer dependencies
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
+find_package(cv_bridge REQUIRED)
+
 # Thirdparty libraries
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io)
@@ -134,8 +138,19 @@ endif()
 
 ament_target_dependencies(fastlio_mapping ${dependencies})
 
+# Colorizer node
+add_executable(colorizer_node src/colorizer_node.cpp)
+target_include_directories(colorizer_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+)
+ament_target_dependencies(colorizer_node rclcpp sensor_msgs cv_bridge pcl_conversions)
+target_link_libraries(colorizer_node ${OpenCV_LIBS} ${PCL_LIBRARIES})
+
 # ---------------- Install --------------- #
-install(TARGETS fastlio_mapping
+install(TARGETS fastlio_mapping colorizer_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
