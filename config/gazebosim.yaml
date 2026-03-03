@@ -1,61 +1,49 @@
 /**:
     ros__parameters:
-        # FAST-LIO Configuration for Gazebo Simulation
-        # Optimized for clean simulation data with minimal IMU noise
-
         feature_extract_enable: false
-        point_filter_num: 4           # Heavier downsampling for dense sim data
-        max_iteration: 4              # Fewer iterations (clean data converges fast)
-        filter_size_surf: 0.15        # Voxel size for surface features
-        filter_size_map: 0.2          # Voxel size for map (slightly larger to prevent overflow)
-        cube_side_length: 500.0       # Local map cube size
+        point_filter_num: 4
+        max_iteration: 4
+        filter_size_surf: 0.15
+        filter_size_map: 0.2
+        cube_side_length: 500.0
         runtime_pos_log_enable: false
 
         common:
             lid_topic:  "/px4_offboard_sim/lidar/points"
             imu_topic:  "/px4_offboard_sim/imu/data"
-            time_sync_en: false         # Disable time sync (sim uses same clock)
+            time_sync_en: false
             time_offset_lidar_to_imu: 0.0
 
         preprocess:
             lidar_type: 5       # GAZEBOSIM handler
-            scan_line:  120     # 120 vertical channels (from x500_depth model SDF)
-            blind:      0.3     # 0.3m blind zone (matches SDF range.min)
-            scan_rate:  10      # 10 Hz (from SDF update_rate)
-            timestamp_unit: 0   # 0 = seconds (simulation time)
+            scan_line:  120
+            blind:      0.3
+            scan_rate:  10
+            timestamp_unit: 0   # seconds (simulation time)
 
         mapping:
-            # IMU noise parameters - VERY LOW for clean simulation IMU
-            acc_cov: 0.001          # Accelerometer noise covariance (trust IMU)
-            gyr_cov: 0.0001         # Gyroscope noise covariance (trust IMU)
-            b_acc_cov: 0.00001      # Accelerometer bias covariance (stable)
-            b_gyr_cov: 0.000001     # Gyroscope bias covariance (nearly frozen)
-
-            # Extrinsic calibration (LiDAR to IMU)
-            # offset_T_L_I = position of LiDAR origin in IMU (base_link) frame
-            # From SDF: lidar_link is at (0, 0, +0.052) relative to base_link
-            # gz_frame_id=lidar_link, so point cloud data is in lidar_link frame
-            # World is ENU (z-up), IMU is FLU (z-up), frames are aligned
-            extrinsic_est_en: false  # Disable - use exact SDF values
-            extrinsic_T: [0.0, 0.0, 0.052]  # LiDAR is 0.052m ABOVE IMU (+z)
+            acc_cov: 0.001
+            gyr_cov: 0.0001
+            b_acc_cov: 0.00001
+            b_gyr_cov: 0.000001
+            fov_degree: 360.0
+            det_range:  40.0
+            extrinsic_est_en: false
+            extrinsic_T: [0.0, 0.0, 0.052]
             extrinsic_R: [ 1., 0., 0.,
                            0., 1., 0.,
-                           0., 0., 1.]  # Identity rotation - frames aligned
-
-            fov_degree: 360.0   # Horizontal FOV (full 360°)
-            det_range:  40.0    # Maximum detection range (from SDF range.max=40.0)
+                           0., 0., 1.]
 
         publish:
-            path_en: true                # Publish Path
-            effect_map_en: false         # Disable effect cloud (reduce overhead)
-            map_en: true                 # Publish Map cloud
-            scan_publish_en:  true       # Output point cloud
-            dense_publish_en: false      # Disable dense cloud (memory)
-            scan_bodyframe_pub_en: true  # Output point cloud in body frame
-            map_frame_id: "camera_init"  # FAST-LIO map frame (will be aliased to map)
-            body_frame_id: "base_link"   # Body frame for TF
+            path_en: true
+            effect_map_en: false
+            map_en: true
+            scan_publish_en:  true
+            dense_publish_en: false
+            scan_bodyframe_pub_en: true
+            map_frame_id: "camera_init"
+            body_frame_id: "body"
 
         pcd_save:
-            pcd_save_en: true
+            pcd_save_en: false
             interval: -1
-            map_file_prefix: "sim_map"  # Prefix for datetime-stamped PCD files (e.g. sim_map_20260216_143000.pcd)

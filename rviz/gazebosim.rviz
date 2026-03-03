@@ -315,6 +315,38 @@ Visualization Manager:
       Value: false
 
     # ============================================
+    # Octomap Voxel Grid - 3D occupied cells
+    # ============================================
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: OctomapVoxels
+      Namespaces:
+        "": true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /occupied_cells_vis_array
+      Value: true
+
+    # ============================================
+    # Octomap Free Space
+    # ============================================
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: OctomapFreeSpace
+      Namespaces:
+        "": true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /free_cells_vis_array
+      Value: false
+
+    # ============================================
     # Grid - Reference ground plane at Z=0
     # BRIGHT RED - Shows exactly where Gazebo ground is
     # ============================================
