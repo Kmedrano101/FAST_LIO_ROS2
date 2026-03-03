@@ -146,7 +146,7 @@ target_include_directories(colorizer_node PUBLIC
   ${PCL_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
 )
-ament_target_dependencies(colorizer_node rclcpp sensor_msgs cv_bridge pcl_conversions)
+ament_target_dependencies(colorizer_node rclcpp sensor_msgs nav_msgs cv_bridge pcl_conversions)
 target_link_libraries(colorizer_node ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
 # ---------------- Install --------------- #

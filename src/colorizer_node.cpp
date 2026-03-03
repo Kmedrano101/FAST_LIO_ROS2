@@ -2,6 +2,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <cv_bridge/cv_bridge.h>
 
 #include <pcl_conversions/pcl_conversions.h>
@@ -9,6 +10,7 @@
 #include <pcl/point_cloud.h>
 
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
@@ -37,9 +39,13 @@ public:
         declare_parameter("max_depth", 30.0);
         declare_parameter("image_margin", 5);
         declare_parameter("intensity_as_grayscale", true);
+        declare_parameter("odom_topic", "/Odometry");
+        declare_parameter("output_frame", "camera_init");
 
         auto cloud_topic = get_parameter("cloud_topic").as_string();
         auto output_topic = get_parameter("output_topic").as_string();
+        auto odom_topic = get_parameter("odom_topic").as_string();
+        output_frame_ = get_parameter("output_frame").as_string();
         int num_cameras = get_parameter("num_cameras").as_int();
         use_compressed_ = get_parameter("use_compressed").as_bool();
         auto base_to_body_vec = get_parameter("base_to_body_t").as_double_array();
@@ -123,8 +129,15 @@ public:
         // Publisher for colored point cloud
         cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_topic, 10);
 
+        // Subscribe to odometry for body->global transform
+        odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+            odom_topic, 10,
+            std::bind(&PointCloudColorizerNode::odom_callback, this, std::placeholders::_1));
+
         RCLCPP_INFO(get_logger(), "Initialized with %zu cameras", cameras_.size());
-        RCLCPP_INFO(get_logger(), "  cloud: %s -> %s", cloud_topic.c_str(), output_topic.c_str());
+        RCLCPP_INFO(get_logger(), "  cloud: %s -> %s (frame: %s)",
+                    cloud_topic.c_str(), output_topic.c_str(), output_frame_.c_str());
+        RCLCPP_INFO(get_logger(), "  odom: %s", odom_topic.c_str());
         RCLCPP_INFO(get_logger(), "  depth: [%.1f, %.1f] m, margin: %d px",
                     min_depth_, max_depth_, margin);
     }
@@ -178,6 +191,17 @@ private:
         }
     }
 
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {
+        const auto& p = msg->pose.pose.position;
+        const auto& q = msg->pose.pose.orientation;
+
+        std::lock_guard<std::mutex> lock(odom_mutex_);
+        odom_R_ = Eigen::Quaterniond(q.w, q.x, q.y, q.z).toRotationMatrix();
+        odom_t_ = Eigen::Vector3d(p.x, p.y, p.z);
+        has_odom_ = true;
+    }
+
     void cloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
         // Grab latest images from all cameras
@@ -215,6 +239,19 @@ private:
 
         if (input_cloud.empty()) return;
 
+        // Grab latest odometry (body pose in global frame)
+        Eigen::Matrix3d R_odom;
+        Eigen::Vector3d t_odom;
+        bool transform_to_global = false;
+        {
+            std::lock_guard<std::mutex> lock(odom_mutex_);
+            if (has_odom_ && !output_frame_.empty()) {
+                R_odom = odom_R_;
+                t_odom = odom_t_;
+                transform_to_global = true;
+            }
+        }
+
         // Colorize
         pcl::PointCloud<pcl::PointXYZRGB> output_cloud;
         output_cloud.header = input_cloud.header;
@@ -228,11 +265,19 @@ private:
             const auto& pin = input_cloud[i];
             auto& pout = output_cloud[i];
 
-            pout.x = pin.x;
-            pout.y = pin.y;
-            pout.z = pin.z;
-
             Eigen::Vector3d p_body(pin.x, pin.y, pin.z);
+
+            // Output in global frame if odometry is available
+            if (transform_to_global) {
+                Eigen::Vector3d p_global = R_odom * p_body + t_odom;
+                pout.x = static_cast<float>(p_global.x());
+                pout.y = static_cast<float>(p_global.y());
+                pout.z = static_cast<float>(p_global.z());
+            } else {
+                pout.x = pin.x;
+                pout.y = pin.y;
+                pout.z = pin.z;
+            }
 
             bool colored = false;
             for (size_t c = 0; c < cameras_.size(); ++c) {
@@ -275,6 +320,9 @@ private:
         sensor_msgs::msg::PointCloud2 output_msg;
         pcl::toROSMsg(output_cloud, output_msg);
         output_msg.header = msg->header;
+        if (transform_to_global) {
+            output_msg.header.frame_id = output_frame_;
+        }
         cloud_pub_->publish(output_msg);
 
         // Periodic stats
@@ -292,7 +340,15 @@ private:
 
     std::vector<std::unique_ptr<CameraState>> cameras_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
+
+    // Odometry: body pose in global (camera_init) frame
+    std::mutex odom_mutex_;
+    Eigen::Matrix3d odom_R_{Eigen::Matrix3d::Identity()};
+    Eigen::Vector3d odom_t_{Eigen::Vector3d::Zero()};
+    bool has_odom_{false};
+    std::string output_frame_;
 
     double min_depth_;
     double max_depth_;
