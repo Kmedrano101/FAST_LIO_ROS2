@@ -12,6 +12,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/filters/voxel_grid.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -20,9 +22,12 @@
 
 #include "pointcloud_colorizer/colorizer.hpp"
 
+#include <csignal>
 #include <mutex>
 #include <vector>
 #include <memory>
+#include <chrono>
+#include <filesystem>
 
 using pointcloud_colorizer::Camera;
 using pointcloud_colorizer::facing_to_rotation;
@@ -45,6 +50,9 @@ public:
         declare_parameter("intensity_as_grayscale", true);
         declare_parameter("odom_topic", "/Odometry");
         declare_parameter("output_frame", "camera_init");
+        declare_parameter("pcd_save_en", false);
+        declare_parameter("pcd_file_path", std::string("~/ros2_ws/src/fast_lio_ros2/PCD/colorized_map.pcd"));
+        declare_parameter("pcd_voxel_size", 0.05);
 
         auto cloud_topic = get_parameter("cloud_topic").as_string();
         auto output_topic = get_parameter("output_topic").as_string();
@@ -57,6 +65,15 @@ public:
         max_depth_ = get_parameter("max_depth").as_double();
         int margin = get_parameter("image_margin").as_int();
         intensity_fallback_ = get_parameter("intensity_as_grayscale").as_bool();
+
+        pcd_save_en_ = get_parameter("pcd_save_en").as_bool();
+        pcd_file_path_ = get_parameter("pcd_file_path").as_string();
+        pcd_voxel_size_ = get_parameter("pcd_voxel_size").as_double();
+
+        if (pcd_save_en_) {
+            accumulated_cloud_ = std::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+            RCLCPP_INFO(get_logger(), "PCD accumulation ENABLED (voxel=%.3f m)", pcd_voxel_size_);
+        }
 
         Eigen::Vector3d base_to_body_t(base_to_body_vec[0], base_to_body_vec[1], base_to_body_vec[2]);
 
@@ -329,6 +346,12 @@ private:
         }
         cloud_pub_->publish(output_msg);
 
+        // Accumulate for PCD save
+        if (pcd_save_en_) {
+            std::lock_guard<std::mutex> lock(accum_mutex_);
+            *accumulated_cloud_ += output_cloud;
+        }
+
         // Periodic stats
         cloud_count_++;
         if (cloud_count_ % 100 == 1) {
@@ -359,12 +382,98 @@ private:
     bool intensity_fallback_;
     bool use_compressed_;
     uint64_t cloud_count_{0};
+
+    // PCD accumulation
+    bool pcd_save_en_{false};
+    std::string pcd_file_path_;
+    double pcd_voxel_size_{0.05};
+    std::mutex accum_mutex_;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr accumulated_cloud_;
+
+public:
+    void save_pcd()
+    {
+        if (!pcd_save_en_ || !accumulated_cloud_) return;
+
+        std::lock_guard<std::mutex> lock(accum_mutex_);
+        if (accumulated_cloud_->empty()) {
+            RCLCPP_WARN(get_logger(), "No colorized points accumulated, nothing to save");
+            return;
+        }
+
+        // Expand ~ in path
+        std::string path = pcd_file_path_;
+        if (!path.empty() && path[0] == '~') {
+            const char* home = std::getenv("HOME");
+            if (home) path = std::string(home) + path.substr(1);
+        }
+
+        // Add timestamp to filename
+        auto now = std::chrono::system_clock::now();
+        auto t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm_buf;
+        localtime_r(&t, &tm_buf);
+        char ts[32];
+        std::strftime(ts, sizeof(ts), "_%Y%m%d_%H%M%S", &tm_buf);
+
+        // Insert timestamp before .pcd extension
+        auto dot = path.rfind(".pcd");
+        if (dot != std::string::npos) {
+            path.insert(dot, ts);
+        } else {
+            path += ts + std::string(".pcd");
+        }
+
+        // Ensure parent directory exists
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+        RCLCPP_INFO(get_logger(), "Accumulated %zu raw points, applying voxel filter (%.3f m)...",
+                    accumulated_cloud_->size(), pcd_voxel_size_);
+
+        // Voxel downsample
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
+        if (pcd_voxel_size_ > 0.0) {
+            pcl::VoxelGrid<pcl::PointXYZRGB> vg;
+            vg.setInputCloud(accumulated_cloud_);
+            vg.setLeafSize(pcd_voxel_size_, pcd_voxel_size_, pcd_voxel_size_);
+            vg.filter(*filtered);
+        } else {
+            filtered = accumulated_cloud_;
+        }
+
+        RCLCPP_INFO(get_logger(), "Saving colorized PCD: %zu points -> %s",
+                    filtered->size(), path.c_str());
+        pcl::io::savePCDFileBinary(path, *filtered);
+        RCLCPP_INFO(get_logger(), "Colorized PCD saved successfully!");
+    }
 };
+
+static std::shared_ptr<PointCloudColorizerNode> g_node = nullptr;
+
+void signal_handler(int sig)
+{
+    (void)sig;
+    if (g_node) {
+        g_node->save_pcd();
+        g_node.reset();
+    }
+    rclcpp::shutdown();
+}
 
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<PointCloudColorizerNode>());
+    g_node = std::make_shared<PointCloudColorizerNode>();
+
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    rclcpp::spin(g_node);
+    // Save if spin exits normally (signal handler already saved + reset if triggered)
+    if (g_node) {
+        g_node->save_pcd();
+        g_node.reset();
+    }
     rclcpp::shutdown();
     return 0;
 }

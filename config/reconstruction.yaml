@@ -106,7 +106,7 @@
       map_en: false                      # Disable — global map pub gets expensive as map grows
       scan_publish_en: true
       dense_publish_en: false            # Downsampled scan — saves serialization cost
-      scan_bodyframe_pub_en: false       # Disable — not needed for offline reconstruction
+      scan_bodyframe_pub_en: true        # Enable — needed for colorizer
 
     # ==========================================================================
     # PCD SAVE - Enable for final output

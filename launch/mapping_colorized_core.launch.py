@@ -7,7 +7,7 @@
 # Usage:
 #   ros2 launch fast_lio_ros2 mapping_colorized_core.launch.py
 #   ros2 launch fast_lio_ros2 mapping_colorized_core.launch.py lidar_config:=single
-#   ros2 launch fast_lio_ros2 mapping_colorized_core.launch.py modo:=reconstruction
+#   ros2 launch fast_lio_ros2 mapping_colorized_core.launch.py mode:=reconstruction
 ###############################################################################
 
 import os
@@ -21,7 +21,7 @@ from launch_ros.actions import Node
 
 def _launch_setup(context):
     lidar_config = LaunchConfiguration('lidar_config').perform(context)
-    modo = LaunchConfiguration('modo').perform(context)
+    mode = LaunchConfiguration('mode').perform(context)
 
     fast_lio_pkg = get_package_share_directory('fast_lio_ros2')
 
@@ -42,10 +42,10 @@ def _launch_setup(context):
     else:
         lio_launch_file = os.path.join(fast_lio_pkg, 'launch', 'single_mapping_core.launch.py')
 
-    # Forward modo argument to the mapping core launch
+    # Forward mode argument to the mapping core launch
     fast_lio_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(lio_launch_file),
-        launch_arguments={'modo': modo}.items() if lidar_config == 'dual' else [],
+        launch_arguments={'mode': mode}.items() if lidar_config == 'dual' else [],
     )
 
     # ── GoPro cameras ──
@@ -79,7 +79,7 @@ def _launch_setup(context):
 
 def generate_launch_description():
     lidar_config = LaunchConfiguration('lidar_config')
-    modo = LaunchConfiguration('modo')
+    mode = LaunchConfiguration('mode')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -89,9 +89,9 @@ def generate_launch_description():
             description='LiDAR configuration: single MID-360 or dual MID-360',
         ),
         DeclareLaunchArgument(
-            'modo',
-            default_value='default',
-            description='Operation mode: "default", "navigation", or "reconstruction"',
+            'mode',
+            default_value='navigation',
+            description='Operation mode: "navigation" (default, real-time) or "reconstruction" (offline, dense map)',
         ),
         LogInfo(msg=[
             '\n',
@@ -99,7 +99,7 @@ def generate_launch_description():
             ' Colorized Mapping Core (Jetson)\n',
             '===================================================================\n',
             ' LiDAR Config: ', lidar_config, '\n',
-            ' Mode: ', modo, '\n',
+            ' Mode: ', mode, '\n',
             '-------------------------------------------------------------------\n',
             ' Pipeline:\n',
             '   Livox Driver -> FAST-LIO -> Colorizer\n',

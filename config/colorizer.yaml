@@ -60,3 +60,8 @@ pointcloud_colorizer:
 
     # Use LiDAR intensity as grayscale for points not visible to any camera
     intensity_as_grayscale: true
+
+    # PCD accumulation and save (for reconstruction mode)
+    pcd_save_en: true
+    pcd_file_path: "~/ros2_ws/src/fast_lio_ros2/PCD/colorized_map.pcd"
+    pcd_voxel_size: 0.05                   # Voxel filter resolution (meters), 0 = no filter
