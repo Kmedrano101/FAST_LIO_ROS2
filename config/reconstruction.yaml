@@ -14,7 +14,7 @@
     # CORE PARAMETERS - Maximum quality
     # ==========================================================================
     feature_extract_enable: false
-    point_filter_num: 3                  # Keep every 3rd point — aggressive for Jetson throughput
+    point_filter_num: 1                  # Keep ALL points for maximum density
     max_iteration: 3                     # Fewer iterations for faster convergence
     filter_size_surf: 0.12               # 12cm voxels — good density, ~14x fewer than 5cm
     filter_size_map: 0.12                # Match surf resolution
@@ -59,7 +59,7 @@
       blind2: 0.5
       scan_rate2: 10
       timestamp_unit2: 3
-      point_filter_num2: 3               # Keep every 3rd point from LiDAR 2
+      point_filter_num2: 1               # Keep ALL points from LiDAR 2
 
     # ==========================================================================
     # MAPPING - Tuned for accuracy
@@ -105,7 +105,7 @@
       effect_map_en: false               # Disable — saves CPU during reconstruction
       map_en: false                      # Disable — global map pub gets expensive as map grows
       scan_publish_en: true
-      dense_publish_en: false            # Downsampled scan — saves serialization cost
+      dense_publish_en: true             # Dense scan — maximum points for colorizer
       scan_bodyframe_pub_en: true        # Enable — needed for colorizer
 
     # ==========================================================================

@@ -1,0 +1,61 @@
+###############################################################################
+# Offline Point Cloud Colorizer Configuration
+#
+# Colorizes a pre-built reconstruction PCD using GoPro images + odometry
+# from a rosbag replay. Projects world-frame map points onto camera planes
+# using closest-distance strategy for best color quality.
+#
+# Usage:
+#   Terminal 1: ros2 launch fast_lio_ros2 offline_colorizer.launch.py
+#   Terminal 2: ros2 bag play <bag> --clock --rate 1.0 \
+#               --topics /Odometry /gopro/camera_0/image_raw/compressed \
+#                        /gopro/camera_1/image_raw/compressed
+###############################################################################
+
+offline_colorizer:
+  ros__parameters:
+    # --- Input/Output ---
+    pcd_input_path: "~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction_map_20260325_111310.pcd"
+    pcd_output_path: "~/ros2_ws/src/fast_lio_ros2/PCD/colorized_full.pcd"
+
+    # --- Processing ---
+    frame_interval: 0.2            # Process every 0.2s (5 Hz) — good coverage for 50s bag
+    spatial_cell_size: 2.0         # Spatial index cell size (meters)
+    idle_timeout: 5.0              # Auto-save after no odom for this many seconds
+
+    # --- Camera setup (same as colorizer.yaml) ---
+    num_cameras: 2
+    use_compressed: true
+    base_to_body_t: [0.011, -0.06588, -0.02329]
+
+    camera_0:
+      image_topic: "/gopro/camera_0/image_raw/compressed"
+      fx: 1440.0
+      fy: 1440.0
+      cx: 960.0
+      cy: 540.0
+      position: [0.095, 0.0, 0.0]
+      facing: "front"
+
+    camera_1:
+      image_topic: "/gopro/camera_1/image_raw/compressed"
+      fx: 1440.0
+      fy: 1440.0
+      cx: 960.0
+      cy: 540.0
+      position: [-0.095, 0.0, 0.0]
+      facing: "back"
+
+    # --- Depth filtering ---
+    min_depth: 0.5
+    max_depth: 30.0
+    image_margin: 5
+
+    # --- Fallback ---
+    intensity_as_grayscale: true
+
+    # --- Odometry ---
+    odom_topic: "/Odometry"
+
+    # --- Output voxel filter (0 = no filter, keep full density) ---
+    pcd_voxel_size: 0.0

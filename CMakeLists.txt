@@ -149,8 +149,19 @@ target_include_directories(colorizer_node PUBLIC
 ament_target_dependencies(colorizer_node rclcpp sensor_msgs nav_msgs cv_bridge pcl_conversions)
 target_link_libraries(colorizer_node ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
+# Offline colorizer node (post-process full reconstruction PCD)
+add_executable(offline_colorizer_node src/offline_colorizer_node.cpp)
+target_include_directories(offline_colorizer_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+)
+ament_target_dependencies(offline_colorizer_node rclcpp sensor_msgs nav_msgs cv_bridge pcl_conversions)
+target_link_libraries(offline_colorizer_node ${OpenCV_LIBS} ${PCL_LIBRARIES})
+
 # ---------------- Install --------------- #
-install(TARGETS fastlio_mapping colorizer_node
+install(TARGETS fastlio_mapping colorizer_node offline_colorizer_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
