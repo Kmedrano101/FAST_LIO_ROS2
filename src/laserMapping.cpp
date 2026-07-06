@@ -58,6 +58,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
+#include <filesystem>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -261,6 +262,30 @@ inline void dump_lio_state_to_log(FILE *fp)
     fprintf(fp, "%lf %lf %lf ", state_point.grav[0], state_point.grav[1], state_point.grav[2]); // Bias_a  
     fprintf(fp, "\r\n");
     fflush(fp);
+}
+
+// Expand a leading "~/" to $HOME and ensure the parent directory exists.
+// PCL's writeBinary passes the path straight to std::ofstream, which neither
+// expands "~" nor creates missing directories, so both must be handled here.
+std::string prepare_pcd_path(const std::string& raw_path) {
+    std::string path = raw_path;
+    if (!path.empty() && path[0] == '~' && (path.size() == 1 || path[1] == '/')) {
+        const char* home = std::getenv("HOME");
+        if (home != nullptr) {
+            path = std::string(home) + path.substr(1);
+        }
+    }
+
+    std::error_code ec;
+    std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            std::cerr << "[prepare_pcd_path] Failed to create directory "
+                      << parent << ": " << ec.message() << std::endl;
+        }
+    }
+    return path;
 }
 
 std::string generate_timestamp_filename(const std::string& base_name) {
@@ -755,7 +780,7 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
             string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
             pcl::PCDWriter pcd_writer;
             cout << "current scan saved to /PCD/" << all_points_dir << endl;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            pcd_writer.writeBinary(prepare_pcd_path(all_points_dir), *pcl_wait_save);
             pcl_wait_save->clear();
             scan_wait_num = 0;
         }
@@ -822,7 +847,7 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
 void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_save);
+    pcd_writer.writeBinary(prepare_pcd_path(map_file_path), *pcl_wait_save);
 }
 
 // Publish LiDAR 1 colored (Green)
@@ -2216,7 +2241,7 @@ int main(int argc, char** argv)
         string all_points_dir(string(string(ROOT_DIR) + "PCD/") + timestamped_name);
         pcl::PCDWriter pcd_writer;
         cout << "Map saved to " << all_points_dir << " (" << pcl_wait_save->size() << " points)" << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        pcd_writer.writeBinary(prepare_pcd_path(all_points_dir), *pcl_wait_save);
     }
 
     /**************** save runtime log ****************/
