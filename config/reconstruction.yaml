@@ -14,7 +14,7 @@
     # CORE PARAMETERS - Maximum quality
     # ==========================================================================
     feature_extract_enable: false
-    point_filter_num: 1                  # Keep ALL points for maximum density
+    point_filter_num: 1                  # Keep ALL points (matches outdoor). NOTE: 2026-05-06 indoor bag triggers a FAST-LIO init-time memory runaway on Jetson (OOM at any pfn) — process indoor rec off-board.
     max_iteration: 3                     # Fewer iterations for faster convergence
     filter_size_surf: 0.12               # 12cm voxels — good density, ~14x fewer than 5cm
     filter_size_map: 0.12                # Match surf resolution
@@ -59,7 +59,7 @@
       blind2: 0.5
       scan_rate2: 10
       timestamp_unit2: 3
-      point_filter_num2: 1               # Keep ALL points from LiDAR 2
+      point_filter_num2: 1               # Keep ALL points from LiDAR 2 (matches outdoor)
 
     # ==========================================================================
     # MAPPING - Tuned for accuracy
