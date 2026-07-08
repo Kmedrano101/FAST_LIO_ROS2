@@ -117,11 +117,16 @@ def generate_launch_description():
     # ==========================================================================
     ld = LaunchDescription()
 
-    # Add all argument declarations
+    # Add all argument declarations.
+    # NOTE: declare_mode_cmd MUST come first — the default_value of
+    # use_sim_time (and effective_config) is a PythonExpression that references
+    # 'mode'. If 'mode' is not declared yet when those defaults are evaluated,
+    # launch raises "launch configuration 'mode' does not exist", which made
+    # 'mode' wrongly behave as a required argument.
+    ld.add_action(declare_mode_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_config_path_cmd)
     ld.add_action(declare_config_file_cmd)
-    ld.add_action(declare_mode_cmd)
 
     # Add informational log message
     ld.add_action(LogInfo(
