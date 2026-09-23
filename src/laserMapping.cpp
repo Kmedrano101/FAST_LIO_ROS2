@@ -844,12 +844,6 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     pubLaserCloudMap->publish(laserCloudmsg);
 }
 
-void save_to_pcd()
-{
-    pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(prepare_pcd_path(map_file_path), *pcl_wait_save);
-}
-
 // Publish LiDAR 1 colored (Green)
 void publish_lidar1_colored(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub)
 {
@@ -1306,6 +1300,7 @@ private:
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
         this->declare_parameter<string>("pcd_save.pcd_file_name", "pointclouds.pcd");
         this->declare_parameter<int>("pcd_save.interval", -1);
+        this->declare_parameter<bool>("pcd_save.reset_after_save", true);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T_1", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R_1", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_T_2", vector<double>());
@@ -1827,18 +1822,62 @@ private:
 
     void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
     {
-        RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
-        if (pcd_save_en)
-        {
-            save_to_pcd();
-            res->success = true;
-            res->message = "Map saved.";
-        }
-        else
+        (void)req;
+
+        if (!pcd_save_en)
         {
             res->success = false;
-            res->message = "Map save disabled.";
+            res->message = "Map save disabled (pcd_save.pcd_save_en is false).";
+            return;
         }
+
+        // Read the destination at call time, not from the constructor copy: the
+        // recording orchestrator runs `ros2 param set map_file_path <session>.pcd`
+        // just before calling this service so every session gets its own file.
+        const string target = this->get_parameter("map_file_path").as_string();
+        const size_t point_count = pcl_wait_save->size();
+
+        if (point_count == 0)
+        {
+            res->success = false;
+            res->message = "No accumulated points to save.";
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
+            return;
+        }
+
+        RCLCPP_INFO(this->get_logger(), "Saving map to %s (%zu points)...", target.c_str(), point_count);
+
+        int ret = -1;
+        try
+        {
+            pcl::PCDWriter pcd_writer;
+            ret = pcd_writer.writeBinary(prepare_pcd_path(target), *pcl_wait_save);
+        }
+        catch (const std::exception &e)
+        {
+            ret = -1;
+            RCLCPP_ERROR(this->get_logger(), "PCD write threw: %s", e.what());
+        }
+
+        if (ret != 0)
+        {
+            res->success = false;
+            res->message = "Failed to write " + target;
+            RCLCPP_ERROR(this->get_logger(), "%s", res->message.c_str());
+            return;
+        }
+
+        // Start the next session from an empty accumulator, otherwise its map
+        // would still carry every point from this one. No lock needed: this
+        // callback and publish_frame_world both run on the single-threaded
+        // executor that rclcpp::spin() installs.
+        if (this->get_parameter("pcd_save.reset_after_save").as_bool())
+        {
+            pcl_wait_save->clear();
+        }
+
+        res->success = true;
+        res->message = target + " (" + to_string(point_count) + " points)";
     }
 
     // Member callback for standard PointCloud2 messages - LiDAR 1

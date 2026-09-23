@@ -118,6 +118,8 @@
       pcd_save_en: true
       pcd_file_name: "map.pcd"
       interval: -1
+      reset_after_save: true             # Clear the accumulator on /map_save so
+                                         # each recording session gets its own map
 
     # ==========================================================================
     # IMU TRANSFORM - Matches driver extrinsics (roll=90, yaw=180)
