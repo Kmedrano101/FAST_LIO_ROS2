@@ -14,7 +14,8 @@
     # CORE PARAMETERS - Matched to tested dual_mid360.yaml
     # ==========================================================================
     feature_extract_enable: false
-    point_filter_num: 1                  # Keep all points (tested value)
+    # point_filter_num se define bajo preprocess: (ahi es donde lo lee el nodo).
+    # Antes estaba aqui a 1 y se ignoraba: L1 corria con el valor por defecto 2.
     max_iteration: 4                     # 4 iterations for accuracy (tested)
     filter_size_surf: 0.2                # 20cm voxels (tested)
     filter_size_map: 0.2                 # 20cm map resolution (tested)
@@ -54,13 +55,15 @@
       blind: 1.0                         # Ignore close points
       scan_rate: 10
       timestamp_unit: 3                  # Nanoseconds
+      point_filter_num: 3                # 1 de cada 3 puntos (L1). Prueba 2026-09-29:
+                                         # -41% de nube frente a 2, CPU 52%->40%
 
       lidar_type2: 4
       scan_line2: 4
       blind2: 0.3                        # Tested value for L2
       scan_rate2: 10
       timestamp_unit2: 3
-      point_filter_num2: 2               # Tested value for L2
+      point_filter_num2: 3               # 1 de cada 3 puntos (L2), igual que L1
 
     # ==========================================================================
     # MAPPING - Matched to tested dual_mid360.yaml IMU noise model
@@ -88,8 +91,9 @@
                       0.0, 1.0, 0.0,
                       0.0, 0.0, 1.0]
 
-      # L2 relative to L1 (22cm Y-axis separation)
-      extrinsic_T_L2_wrt_L1: [0.0, -0.220, 0.0]
+      # L2 relative to L1: both clouds already arrive in base_link (22cm Y baseline
+      # is applied by the MID-360 firmware via SetLivoxLidarInstallAttitude) -> zero here
+      extrinsic_T_L2_wrt_L1: [0.0, 0.0, 0.0]
       extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,
                               0.0, 1.0, 0.0,
                               0.0, 0.0, 1.0]

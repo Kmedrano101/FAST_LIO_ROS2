@@ -127,10 +127,9 @@
                       0.0, 0.0, 1.0]
       
       # Relative transformation from LiDAR 2 to LiDAR 1 (en base_link)
-      extrinsic_T_L2_wrt_L1: [0.0, -0.220, 0.0]  # [x, y, z] meters
-      #   x = 0.0:    Mismo plano longitudinal
-      #   y = -0.220: 220mm separación (L1 en +110mm, L2 en -110mm)
-      #   z = 0.0:    Misma altura
+      extrinsic_T_L2_wrt_L1: [0.0, 0.0, 0.0]  # [x, y, z] meters
+      #   Cero: el firmware MID-360 ya aplica ±110 mm (SetLivoxLidarInstallAttitude); no duplicar.
+      #   Las nubes ya llegan en base_link (L1 en y=+110mm, L2 en y=-110mm).
       
       # Rotación L2 respecto a L1 (identidad en base_link, driver ya compensó yaw)
       extrinsic_R_L2_wrt_L1: [1.0, 0.0, 0.0,

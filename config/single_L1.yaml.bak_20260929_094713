@@ -1,8 +1,7 @@
 /**:
     ros__parameters:
         feature_extract_enable: false
-        # point_filter_num se define bajo preprocess: (ahi es donde lo lee el nodo).
-        # Antes estaba aqui a 3 y se ignoraba: corria con el valor por defecto 2.
+        point_filter_num: 3
         max_iteration: 3
         filter_size_surf: 0.2
         filter_size_map: 0.2
@@ -24,7 +23,6 @@
             scan_line:  64
             blind: 0.5
             timestamp_unit: 3
-            point_filter_num: 3          # 1 de cada 3 puntos
             scan_rate: 10
 
         mapping:
