@@ -18,9 +18,10 @@ Dual Livox MID-360 reconstruction on NVIDIA Jetson ORIN.
 ## Prerequisites
 
 ```bash
-# 1. Build the workspace
+# 1. Build the workspace (replace ~/ros2_ws with yours, e.g. ~/tidop_ws)
 cd ~/ros2_ws
-colcon build --packages-select fast_lio_ros2 --symlink-install
+colcon build --packages-select livox_ros_driver2 fast_lio_ros2 --symlink-install \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # 2. Source the workspace (add to ~/.bashrc for convenience)
 source ~/ros2_ws/install/setup.bash
@@ -37,30 +38,42 @@ ros2 topic list | grep livox
 
 ## Reconstruction Workflow
 
-Optimized for generating dense 3D maps on Jetson ORIN. Uses 12cm voxels and every-3rd-point
-decimation to balance map quality with processing throughput. Non-essential topic publishing
+Optimized for generating dense 3D maps on Jetson ORIN. Uses 12cm voxels and keeps
+all points from both LiDARs (`point_filter_num: 1`). Non-essential topic publishing
 is disabled to save CPU. All processed points are accumulated and saved to PCD on shutdown.
 
 ### Step 1 — Launch FAST-LIO
 
 **From rosbag (typical):**
 ```bash
-ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction
+ros2 launch fast_lio_ros2 dual_mapping_core.launch.py mode:=reconstruction
 ```
 
-> `use_sim_time` defaults to `true` automatically when `modo:=reconstruction`.
+> `use_sim_time` defaults to `true` automatically when `mode:=reconstruction`.
 > No need to pass it explicitly for rosbag playback.
+
+> **The argument is `mode`, not `modo`.** ROS 2 silently ignores unknown launch
+> arguments, so `modo:=reconstruction` runs FAST-LIO with `navigation.yaml`
+> (BUNDLE, 20 cm voxels, 1-in-3 points). Confirm the log shows
+> `Update method: 1 (ASYNC)` and `ros2 param get /fastlio_mapping use_sim_time` returns `True`.
 
 **Live sensors:**
 ```bash
-ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction use_sim_time:=false
+ros2 launch fast_lio_ros2 dual_mapping_core.launch.py mode:=reconstruction use_sim_time:=false
 ```
 
 ### Step 2 — Play the rosbag
 
 ```bash
-ros2 bag play <path_to_bag>/ --clock --rate 0.5
+ros2 bag play <path_to_bag>/ --clock --rate 0.5 --topics \
+    /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 \
+    /livox/imu_192_168_1_10 /livox/imu_192_168_1_18
 ```
+
+> XTRACT bags (`XTRACT_<date>_<time>/`) also contain the `/Odometry` recorded live by
+> FAST-LIO plus the GoPro images. `--topics` replays only the sensor data, so the
+> recorded `/Odometry` does not clash with the one FAST-LIO is publishing. Older
+> `Livox_*` bags only contain LiDAR/IMU and can be played without `--topics`.
 
 > Use `--rate 0.5` on Jetson ORIN to prevent buffer overflow. Desktop systems
 > can use `--rate 0.8` or higher.
@@ -71,6 +84,23 @@ Wait for the rosbag to finish playing. The FAST-LIO node will continue processin
 any remaining buffered scans (the 500-scan buffer may still be draining).
 
 ### Step 4 — Save the map
+
+There are two ways to save. **Use one or the other**, not both.
+
+**Option A — `/map_save` service (recommended: you choose the file path)**
+
+```bash
+ros2 param set /fastlio_mapping map_file_path <path_to_bag>/<bag_name>_reconstruction.pcd
+ros2 service call /map_save std_srvs/srv/Trigger
+# response: success=True, message='<path> (N points)'
+```
+
+Then press `Ctrl+C` in the FAST-LIO terminal to stop the node.
+
+> `/map_save` clears the accumulated map after saving (`pcd_save.reset_after_save: true`),
+> so the `Ctrl+C` that follows does **not** write a second PCD.
+
+**Option B — `Ctrl+C`**
 
 Press `Ctrl+C` in the FAST-LIO terminal. The node will:
 1. Deactivate cleanly (lifecycle shutdown)
@@ -83,8 +113,11 @@ Press `Ctrl+C` in the FAST-LIO terminal. The node will:
 ### Step 5 — Verify the output
 
 ```bash
-ls -lh ~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction_map_*.pcd
+ls -lh <path_to_bag>/<bag_name>_reconstruction.pcd           # Option A
+ls -lh ~/ros2_ws/src/fast_lio_ros2/PCD/reconstruction_map_*.pcd   # Option B
 ```
+
+As a reference, the 60 s bag `XTRACT_20260930_143059` gives ~12.5 M points (~400 MB).
 
 ### Published Topics
 
@@ -119,13 +152,19 @@ Located at: `/home/jetson/xtract-payload-orchestrator/data/rosbags/`
 
 ```bash
 # Terminal 1: Launch FAST-LIO (use_sim_time auto-enabled)
-ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction
+ros2 launch fast_lio_ros2 dual_mapping_core.launch.py mode:=reconstruction
 
-# Terminal 2: Play bag
+# Terminal 2: Play bag (only LiDAR + IMU)
 ros2 bag play /home/jetson/xtract-payload-orchestrator/data/rosbags/Livox_20260210_141623/ \
-    --clock --rate 0.5
+    --clock --rate 0.5 --topics \
+    /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 \
+    /livox/imu_192_168_1_10 /livox/imu_192_168_1_18
 
-# Wait for bag to finish, then Ctrl+C in Terminal 1
+# Wait for bag to finish (+10-20 s), then save
+ros2 param set /fastlio_mapping map_file_path ~/Livox_20260210_141623_reconstruction.pcd
+ros2 service call /map_save std_srvs/srv/Trigger
+
+# Ctrl+C in Terminal 1
 ```
 
 ### Recommended playback rates
@@ -143,8 +182,8 @@ ros2 bag play /home/jetson/xtract-payload-orchestrator/data/rosbags/Livox_202602
 
 | Parameter | Value | Effect |
 |-----------|-------|--------|
-| `point_filter_num` | 3 | Keep every 3rd point from LiDAR 1 |
-| `point_filter_num2` | 3 | Keep every 3rd point from LiDAR 2 |
+| `point_filter_num` | 1 | Keep all points from LiDAR 1 |
+| `point_filter_num2` | 1 | Keep all points from LiDAR 2 |
 | `filter_size_surf` | 0.12m | Scan voxel filter before processing |
 | `filter_size_map` | 0.12m | Map voxel filter (ikd-tree resolution) |
 | `cube_side_length` | 2000m | Very large — prevents point trimming |
@@ -224,6 +263,8 @@ extrinsic configuration. Do not change these unless you change the physical moun
 | No points processed | `use_sim_time` is true but no `--clock` on bag play | Add `--clock` flag to `ros2 bag play` |
 | "Buffer full, dropping oldest scan" | Processing too slow for incoming data | Reduce bag `--rate`; increase `filter_size_surf`/`point_filter_num` |
 | No PCD saved on shutdown | Node killed with `kill -9` or OOM crash | Always use `Ctrl+C`; check `dmesg` for OOM |
+| No PCD saved on `Ctrl+C` after `/map_save` | `/map_save` clears the accumulator (`reset_after_save: true`) | Expected — the map is already in the `/map_save` file |
+| `Update method: 0 (BUNDLE)`, `use_sim_time` false, "Time desync" warnings | Launched with `modo:=` (ignored) → `navigation.yaml` | Use `mode:=reconstruction` |
 | Map has holes/missing areas | `cube_side_length` too small, points trimmed | Increase `cube_side_length` (default: 2000m) |
 | LiDAR 2 has fewer points | `point_filter_num2` > filter_num drops more | Ensure both use same `point_filter_num` value |
 | "IMU Initial Done" then nothing | Waiting for LiDAR data after IMU init | Check LiDAR topics: `ros2 topic hz /livox/lidar_*` |

@@ -7,7 +7,7 @@ This branch is purpose-built for **offline 3D reconstruction** using dual Livox 
 
 **Key features:**
 - Dual MID-360 LiDAR support (ASYNC mode)
-- Jetson ORIN optimized — 12cm voxels, every-3rd-point decimation, non-essential publishing disabled
+- Jetson ORIN optimized — 12cm voxels, all points from both LiDARs, non-essential publishing disabled
 - 500-scan buffer to absorb processing spikes during rosbag playback
 - `use_sim_time` auto-enabled for reconstruction mode
 - PCD output with timestamped filenames on clean shutdown (`Ctrl+C`)
@@ -15,22 +15,39 @@ This branch is purpose-built for **offline 3D reconstruction** using dual Livox 
 ### Quick Start
 
 ```bash
-# 1. Build
+# 1. Build (replace ~/ros2_ws with your workspace, e.g. ~/tidop_ws)
 cd ~/ros2_ws
-colcon build --packages-select fast_lio_ros2
+colcon build --packages-select livox_ros_driver2 fast_lio_ros2 --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-# 2. Launch (use_sim_time defaults to true for reconstruction)
-ros2 launch fast_lio_ros2 dual_mapping_core.launch.py modo:=reconstruction
+# 2. Terminal 1 — launch FAST-LIO (use_sim_time defaults to true for reconstruction)
+ros2 launch fast_lio_ros2 dual_mapping_core.launch.py mode:=reconstruction
 
-# 3. Play rosbag (separate terminal)
-ros2 bag play <path_to_bag>/ --clock --rate 0.5
+# 3. Terminal 2 — play only the LiDAR + IMU topics of the rosbag
+ros2 bag play <path_to_bag>/ --clock --rate 0.5 --topics \
+    /livox/lidar_192_168_1_10 /livox/lidar_192_168_1_18 \
+    /livox/imu_192_168_1_10 /livox/imu_192_168_1_18
 
-# 4. Wait for bag to finish, then Ctrl+C to save PCD
-# Output: PCD/reconstruction_map_<timestamp>.pcd
+# 4. When the bag finishes, wait ~10-20 s and save the map (Terminal 2)
+ros2 param set /fastlio_mapping map_file_path <path_to_bag>/<bag_name>_reconstruction.pcd
+ros2 service call /map_save std_srvs/srv/Trigger
+
+# 5. Ctrl+C in Terminal 1 to stop FAST-LIO
 ```
 
-See [docs/QUICK_START.md](docs/QUICK_START.md) for the full guide.
+> **The launch argument is `mode`, not `modo`.** An unknown argument such as
+> `modo:=reconstruction` is silently ignored and FAST-LIO runs with
+> `navigation.yaml` (BUNDLE, 20 cm voxels, 1-in-3 points). Check that the log
+> prints `Update method: 1 (ASYNC)`.
+
+> **Why `--topics`:** XTRACT bags also record FAST-LIO's own `/Odometry` (and GoPro
+> images). Replaying the recorded `/Odometry` would clash with the one FAST-LIO publishes.
+
+> **`/map_save` vs `Ctrl+C`:** without calling `/map_save`, `Ctrl+C` saves the map to
+> `PCD/reconstruction_map_<timestamp>.pcd`. `/map_save` clears the accumulator after
+> saving (`pcd_save.reset_after_save: true`), so a later `Ctrl+C` saves nothing.
+
+See [docs/QUICK_START.md](docs/QUICK_START.md#reconstruction-workflow) for the full step-by-step guide (verification, buffer behaviour, troubleshooting).
 
 ### Configuration
 
@@ -40,7 +57,7 @@ The reconstruction config is at `config/reconstruction.yaml`. Key parameters tun
 |-----------|-------|-----------|
 | `filter_size_surf` | 0.12m | 12cm voxels — dense but processable on Jetson |
 | `filter_size_map` | 0.12m | Match surf resolution |
-| `point_filter_num` | 3 | Every 3rd point from each LiDAR |
+| `point_filter_num` / `point_filter_num2` | 1 | All points from each LiDAR (maximum density) |
 | `max_iteration` | 3 | Fast EKF convergence |
 | `det_range` | 30m | Bounded map management |
 | `map_en` | false | Saves CPU — PCD save is independent of topic publishing |
